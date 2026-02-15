@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shopify-gift-store-agent"
+version = "1.0.0"
+description = "Shopify Gift Store Agent SDK — fetch products, recommend gifts, manage inventory. Designed for LLM/agent integration."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+shopify-agent = "shopify_agent.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shopify_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
