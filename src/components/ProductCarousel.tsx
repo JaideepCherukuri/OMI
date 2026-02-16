@@ -9,10 +9,11 @@ import clsx from 'clsx'
 interface ProductCarouselProps {
   products: ProductDetail[]
   onAddToCart?: (product: ProductDetail, variant?: VariantDetail) => void
+  onProductClick?: (product: ProductDetail) => void
   highlightedProductId?: number
 }
 
-export default function ProductCarousel({ products, onAddToCart, highlightedProductId }: ProductCarouselProps) {
+export default function ProductCarousel({ products, onAddToCart, onProductClick, highlightedProductId }: ProductCarouselProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [canScrollLeft, setCanScrollLeft] = useState(false)
   const [canScrollRight, setCanScrollRight] = useState(false)
@@ -41,17 +42,23 @@ export default function ProductCarousel({ products, onAddToCart, highlightedProd
     el.scrollBy({ left: direction === 'left' ? -amount : amount, behavior: 'smooth' })
   }
 
-  // Grid layout for ≤4 products
+  // Grid layout for ≤4 products (with stagger animation — PRD Round 4)
   if (products.length <= 4) {
     return (
       <div className="grid grid-cols-2 gap-3 my-2">
-        {products.map(p => (
-          <ProductCard
+        {products.map((p, i) => (
+          <div
             key={p.productId}
-            product={p}
-            onAddToCart={onAddToCart}
-            isHighlighted={p.productId === highlightedProductId}
-          />
+            className="animate-fadeInUp"
+            style={{ animationDelay: `${i * 100}ms`, animationFillMode: 'both' }}
+          >
+            <ProductCard
+              product={p}
+              onAddToCart={onAddToCart}
+              onProductClick={onProductClick}
+              isHighlighted={p.productId === highlightedProductId}
+            />
+          </div>
         ))}
       </div>
     )
@@ -67,14 +74,20 @@ export default function ProductCarousel({ products, onAddToCart, highlightedProd
         ref={scrollRef}
         className="carousel-container flex gap-3 overflow-x-auto pb-2 px-1"
       >
-        {products.map(p => (
-          <ProductCard
+        {products.map((p, i) => (
+          <div
             key={p.productId}
-            product={p}
-            onAddToCart={onAddToCart}
-            isHighlighted={p.productId === highlightedProductId}
-            compact
-          />
+            className="animate-fadeInUp flex-shrink-0"
+            style={{ animationDelay: `${i * 80}ms`, animationFillMode: 'both' }}
+          >
+            <ProductCard
+              product={p}
+              onAddToCart={onAddToCart}
+              onProductClick={onProductClick}
+              isHighlighted={p.productId === highlightedProductId}
+              compact
+            />
+          </div>
         ))}
       </div>
 
