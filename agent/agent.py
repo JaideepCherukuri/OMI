@@ -23,7 +23,8 @@ from livekit.plugins import google
 from shopify_tools import ShopifyTools
 from catalog_mcp import CatalogMCPClient, StorefrontMCPClient
 
-load_dotenv(".env.local")
+load_dotenv(".env.local")  # Local dev
+load_dotenv(".env")         # Docker / production
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gift-agent")
@@ -94,11 +95,12 @@ async def entrypoint(ctx: JobContext):
     )
     tools = llm.find_function_tools(shopify)
 
-    # Configure Gemini Realtime model
+    # Configure Gemini Realtime model (matching reference implementation exactly)
     model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
         voice="Puck",
         temperature=0.7,
+        modalities=["AUDIO"],
     )
 
     # Create agent session with tools
