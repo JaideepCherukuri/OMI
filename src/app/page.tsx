@@ -30,7 +30,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { VoiceProvider, useVoice } from '@/components/VoiceProvider'
-import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal } from '@/components/chat'
+import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal, ThinkingIndicator } from '@/components/chat'
 import VoiceControls from '@/components/VoiceControls'
 import StoreSwapModal from '@/components/StoreSwapModal'
 import Orb from '@/components/Orb'
@@ -384,6 +384,9 @@ function GiftAIApp({
 
             return null
           })}
+
+          {/* Loading indicator while waiting for AI response */}
+          {voice.isTextLoading && <ThinkingIndicator />}
 
           {/* Scroll anchor */}
           <div ref={chatEndRef} />
