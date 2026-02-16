@@ -390,12 +390,19 @@ class ShopifyTools:
 
     We also publish structured events to the frontend via LiveKit data channel
     so the UI can render product cards, cart updates, etc. in real-time.
+
+    Supports two search modes:
+    1. Local store search (Admin API + synonym expansion) — for the connected store
+    2. Global Catalog MCP search — across ALL Shopify merchants (requires API credentials)
     """
 
-    def __init__(self, store_url: str, access_token: str, room=None):
+    def __init__(self, store_url: str, access_token: str, room=None,
+                 catalog_client=None, storefront_mcp_client=None):
         self._client = ShopifyClient(store_url, access_token)
         self._room = room
         self._last_search_results: list = []
+        self._catalog = catalog_client  # CatalogMCPClient (global search)
+        self._storefront_mcp = storefront_mcp_client  # StorefrontMCPClient
 
     async def _publish(self, data: dict):
         """Send structured event to the frontend via LiveKit data channel."""
@@ -434,6 +441,112 @@ class ShopifyTools:
         for i, p in enumerate(results[:6], 1):
             summaries.append(f"{i}. {p['title']} — {p['priceRange']}")
         return f"Found {len(results)} products:\n" + "\n".join(summaries)
+
+    @llm.function_tool(description="Search products across ALL Shopify stores worldwide. Use for broad discovery when the user wants to explore beyond our store, e.g. 'find me the best matcha set' or 'show me birthday gifts under $50'.")
+    async def search_global_products(
+        self,
+        query: str,
+        max_price: float | None = None,
+        ships_to: str | None = None,
+    ) -> str:
+        """Search the entire Shopify marketplace. Returns products from any merchant."""
+        if not self._catalog:
+            return "Global search is not available. Searching our store instead."
+
+        try:
+            offers = await self._catalog.search_products(
+                query=query,
+                context=f"Voice shopping customer looking for: {query}",
+                limit=6,
+                max_price=max_price,
+                ships_to=ships_to or "US",
+            )
+        except Exception as e:
+            logger.error(f"Catalog MCP search failed: {e}")
+            return f"Global search temporarily unavailable. Try searching our store instead."
+
+        if not offers:
+            return f"No products found across Shopify for '{query}'. Try a different search."
+
+        # Convert Catalog MCP offers to our frontend ProductDetail format
+        products_for_frontend = []
+        for offer in offers[:6]:
+            images = [img.get("url", "") for img in offer.get("images", []) if img.get("url")]
+            price_range = offer.get("priceRange", {})
+            min_price = price_range.get("min", {}).get("amount", "0")
+            max_price_val = price_range.get("max", {}).get("amount", "0")
+            price_str = f"${min_price}" if min_price == max_price_val else f"${min_price}–${max_price_val}"
+
+            # Get shop info from first product entry
+            shop_products = offer.get("products", [])
+            shop_name = "Shopify"
+            checkout_url = ""
+            if shop_products:
+                first = shop_products[0]
+                shop_info = first.get("shop", first.get("featuredImage", {}).get("product", {}).get("shop", {}))
+                if isinstance(shop_info, dict):
+                    shop_name = shop_info.get("name", "Shopify")
+                checkout_url = first.get("checkoutUrl", "")
+
+            # Build variants from options
+            variants = []
+            for opt in offer.get("options", []):
+                for val in opt.get("values", []):
+                    if val.get("availableForSale"):
+                        variants.append({
+                            "variantId": hash(f"{offer['id']}-{val['value']}") % 10**9,
+                            "name": val["value"],
+                            "price": float(min_price),
+                            "inventoryQuantity": 10,  # Available
+                            "compareAtPrice": None,
+                            "sku": "",
+                            "gid": "",
+                        })
+            if not variants:
+                variants.append({
+                    "variantId": hash(offer["id"]) % 10**9,
+                    "name": "Default",
+                    "price": float(min_price),
+                    "inventoryQuantity": 10,
+                    "compareAtPrice": None,
+                    "sku": "",
+                    "gid": "",
+                })
+
+            products_for_frontend.append({
+                "productId": hash(offer["id"]) % 10**9,
+                "title": offer.get("title", "Unknown"),
+                "descriptionHtml": offer.get("description", ""),
+                "vendor": shop_name,
+                "productType": "Global",
+                "tags": [],
+                "status": "active",
+                "handle": offer.get("id", ""),
+                "images": images,
+                "variants": variants,
+                "priceRange": price_str,
+                "totalStock": 100,
+                "hasDiscount": False,
+                "_upid": offer.get("id", ""),
+                "_checkoutUrl": checkout_url,
+                "_shopName": shop_name,
+            })
+
+        self._last_search_results = products_for_frontend
+
+        # Publish to frontend
+        await self._publish({
+            "type": "products_found",
+            "products": products_for_frontend,
+            "query": query,
+            "source": "catalog_mcp",
+        })
+
+        # Build voice summary
+        summaries = []
+        for i, p in enumerate(products_for_frontend[:6], 1):
+            summaries.append(f"{i}. {p['title']} — {p['priceRange']} from {p['vendor']}")
+        return f"Found {len(products_for_frontend)} products across Shopify:\n" + "\n".join(summaries)
 
     @llm.function_tool(description="Add a product to the shopping cart by title. Optionally specify a variant.")
     async def add_to_cart(
