@@ -1,98 +1,95 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import {
-  Gift,
-  ShieldCheck,
-  ShoppingBag,
-  ArrowRight,
-  Sparkles,
-} from 'lucide-react'
+import { useState, useCallback } from 'react'
+import ChatInterface from '@/components/ChatInterface'
+import StoreSwapModal from '@/components/StoreSwapModal'
+import VoiceControls from '@/components/VoiceControls'
+import Orb from '@/components/Orb'
+import { useVoiceAgent } from '@/hooks/useVoiceAgent'
+import type { StoreCredentials, ProductDetail, CartState } from '@/types'
+import { Gift, ArrowLeftRight } from 'lucide-react'
 
-export default function LandingPage() {
-  const router = useRouter()
+const DEFAULT_STORE: StoreCredentials = {
+  storeUrl: process.env.NEXT_PUBLIC_SHOPIFY_STORE_URL || 'jaguar-9969.myshopify.com',
+  accessToken: process.env.NEXT_PUBLIC_SHOPIFY_ACCESS_TOKEN || '',
+}
+
+export default function HomePage() {
+  const [credentials, setCredentials] = useState<StoreCredentials>(DEFAULT_STORE)
+  const [showStoreModal, setShowStoreModal] = useState(false)
+  const [voiceProducts, setVoiceProducts] = useState<ProductDetail[]>()
+  const [voiceCartState, setVoiceCartState] = useState<CartState | null>(null)
+
+  const voice = useVoiceAgent({
+    onProducts: (products) => setVoiceProducts(products),
+    onCartUpdate: (cart) => setVoiceCartState(cart),
+    onCheckout: (url) => window.open(url, '_blank'),
+  })
+
+  const handleStoreSwap = useCallback((newCredentials: StoreCredentials) => {
+    setCredentials(newCredentials)
+    voice.disconnect()
+  }, [voice])
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6">
-      {/* Background gradient */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-brand-600/8 rounded-full blur-[120px]" />
-        <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-brand-800/6 rounded-full blur-[100px]" />
-      </div>
-
-      <div className="relative z-10 max-w-2xl w-full text-center">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-lg shadow-brand-500/20">
-            <Gift className="w-6 h-6 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Gift<span className="text-brand-400">AI</span>
+    <div className="h-screen flex flex-col bg-gray-50">
+      {/* Header */}
+      <header className="bg-white border-b px-4 py-2.5 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Gift className="w-5 h-5 text-purple-600" />
+          <h1 className="font-bold text-lg bg-gradient-to-r from-purple-600 to-fuchsia-500 bg-clip-text text-transparent">
+            GiftAI
           </h1>
         </div>
 
-        <p className="text-lg text-[var(--text-secondary)] mb-12 max-w-md mx-auto leading-relaxed">
-          AI-powered luxury gift store — browse curated gifts or manage your
-          Shopify inventory through natural conversation.
-        </p>
+        <div className="flex items-center gap-3">
+          {/* Voice state Orb (small, docked) */}
+          {voice.voiceState !== 'disconnected' && (
+            <Orb state={voice.voiceState} size="sm" />
+          )}
 
-        {/* Mode cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-          {/* User Mode */}
+          {/* Store indicator */}
           <button
-            onClick={() => router.push('/user')}
-            className="group relative p-6 rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] hover:border-brand-500/30 transition-all duration-300 text-left"
+            onClick={() => setShowStoreModal(true)}
+            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-purple-600 transition-colors"
           >
-            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-brand-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="relative">
-              <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center mb-4 group-hover:bg-brand-500/20 transition-colors">
-                <ShoppingBag className="w-5 h-5 text-brand-400" />
-              </div>
-              <h2 className="text-lg font-semibold mb-1.5 flex items-center gap-2">
-                Shop Gifts
-                <ArrowRight className="w-4 h-4 text-brand-400 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
-              </h2>
-              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-                Browse luxury gifts, get AI recommendations by occasion &
-                budget, and checkout instantly.
-              </p>
-              <div className="flex items-center gap-2 mt-4 text-xs text-[var(--text-secondary)]">
-                <Sparkles className="w-3.5 h-3.5 text-brand-400" />
-                <span>Recommendations • Checkout • Chat</span>
-              </div>
-            </div>
-          </button>
-
-          {/* Admin Mode */}
-          <button
-            onClick={() => router.push('/admin')}
-            className="group relative p-6 rounded-2xl border border-[var(--border)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] hover:border-brand-500/30 transition-all duration-300 text-left"
-          >
-            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-brand-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-            <div className="relative">
-              <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center mb-4 group-hover:bg-brand-500/20 transition-colors">
-                <ShieldCheck className="w-5 h-5 text-brand-400" />
-              </div>
-              <h2 className="text-lg font-semibold mb-1.5 flex items-center gap-2">
-                Admin Panel
-                <ArrowRight className="w-4 h-4 text-brand-400 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
-              </h2>
-              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-                Connect your Shopify store. Manage inventory, create products,
-                and update stock via chat.
-              </p>
-              <div className="flex items-center gap-2 mt-4 text-xs text-[var(--text-secondary)]">
-                <Sparkles className="w-3.5 h-3.5 text-brand-400" />
-                <span>Inventory • CRUD • Analytics</span>
-              </div>
-            </div>
+            <div className="w-2 h-2 rounded-full bg-green-400" />
+            <span className="hidden sm:inline">{credentials.storeUrl.split('.')[0]}</span>
+            <ArrowLeftRight className="w-3.5 h-3.5" />
           </button>
         </div>
+      </header>
 
-        <p className="text-xs text-[var(--text-secondary)]/60">
-          Powered by Gemini AI & Shopify Admin API
-        </p>
-      </div>
+      {/* Main chat area */}
+      <main className="flex-1 overflow-hidden">
+        <ChatInterface
+          key={credentials.storeUrl}
+          credentials={credentials}
+          voiceProducts={voiceProducts}
+          voiceCartState={voiceCartState}
+        />
+      </main>
+
+      {/* Voice controls bar */}
+      <footer className="bg-white border-t px-4 py-2 flex justify-center">
+        <VoiceControls
+          voiceState={voice.voiceState}
+          micEnabled={voice.micEnabled}
+          speakerEnabled={voice.speakerEnabled}
+          onToggleMic={voice.toggleMic}
+          onToggleSpeaker={voice.toggleSpeaker}
+          onConnect={voice.connect}
+          onDisconnect={voice.disconnect}
+        />
+      </footer>
+
+      {/* Store swap modal */}
+      <StoreSwapModal
+        isOpen={showStoreModal}
+        onClose={() => setShowStoreModal(false)}
+        onConnect={handleStoreSwap}
+        currentStore={credentials.storeUrl}
+      />
     </div>
   )
 }

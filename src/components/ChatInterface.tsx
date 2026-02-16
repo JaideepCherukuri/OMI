@@ -1,219 +1,224 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Loader2, Trash2 } from 'lucide-react'
-import type { ChatMessage, StoreCredentials, AppMode, ChatResponse } from '@/types'
-import { ChatMessageBubble, TypingIndicator } from './ChatMessage'
+import type { ChatMessage as ChatMessageType, StoreCredentials, ProductDetail, CartState, VariantDetail } from '@/types'
+import ChatMessage from './ChatMessage'
+import CartPanel from './CartPanel'
+import { Send, ShoppingCart, Loader2 } from 'lucide-react'
+import clsx from 'clsx'
 
-interface Props {
-  mode: AppMode
+interface ChatInterfaceProps {
   credentials: StoreCredentials
+  voiceProducts?: ProductDetail[]
+  voiceCartState?: CartState | null
 }
 
-export function ChatInterface({ mode, credentials }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+const SUGGESTIONS = [
+  "💝 Valentine's Day gifts",
+  "🎂 Birthday ideas",
+  "💍 Wedding anniversary",
+  "🎁 Gifts for her",
+  "🔍 Show everything",
+  "💰 Under $200",
+]
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [])
-
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages, isLoading, scrollToBottom])
-
-  useEffect(() => {
-    // Add welcome message
-    const welcome: ChatMessage = {
+export default function ChatInterface({ credentials, voiceProducts, voiceCartState }: ChatInterfaceProps) {
+  const [messages, setMessages] = useState<ChatMessageType[]>([
+    {
       id: 'welcome',
       role: 'assistant',
-      content:
-        mode === 'admin'
-          ? `Connected to **${credentials.storeUrl}**. I'm your store management assistant.\n\nI can help you:\n• View your product inventory\n• Create new products\n• Update prices, stock, and product details\n• Delete products\n\nWhat would you like to do?`
-          : `Welcome to the gift store! 🎁\n\nI can help you:\n• **Browse** our luxury gift collection\n• **Get recommendations** by occasion, region, or budget\n• **Learn details** about any product\n• **Create a checkout** when you're ready to buy\n\nWhat are you looking for today?`,
+      content: "Hi! 👋 I'm GiftAI, your personal gift shopping assistant. I can help you find the perfect luxury gift for any occasion. What are you looking for today?",
       timestamp: Date.now(),
+    },
+  ])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [cartId, setCartId] = useState<string | undefined>()
+  const [cartState, setCartState] = useState<CartState | null>(null)
+  const [showCart, setShowCart] = useState(false)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => { scrollToBottom() }, [messages])
+
+  // Handle voice products coming in
+  useEffect(() => {
+    if (voiceProducts && voiceProducts.length > 0) {
+      const msg: ChatMessageType = {
+        id: `voice-products-${Date.now()}`,
+        role: 'assistant',
+        content: `Found ${voiceProducts.length} products for you:`,
+        timestamp: Date.now(),
+        source: 'voice',
+        products: voiceProducts,
+      }
+      setMessages(prev => [...prev, msg])
     }
-    setMessages([welcome])
-  }, [mode, credentials.storeUrl])
+  }, [voiceProducts])
 
-  async function handleSend() {
-    const trimmed = input.trim()
-    if (!trimmed || isLoading) return
+  // Handle voice cart updates
+  useEffect(() => {
+    if (voiceCartState) {
+      setCartState(voiceCartState)
+      setCartId(voiceCartState.cartId)
+    }
+  }, [voiceCartState])
 
-    const userMsg: ChatMessage = {
+  const sendMessage = useCallback(async (text: string) => {
+    if (!text.trim() || loading) return
+
+    const userMsg: ChatMessageType = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: trimmed,
+      content: text.trim(),
       timestamp: Date.now(),
+      source: 'text',
     }
-
-    setMessages((prev) => [...prev, userMsg])
+    setMessages(prev => [...prev, userMsg])
     setInput('')
-    setIsLoading(true)
+    setLoading(true)
 
     try {
-      const history = messages
-        .filter((m) => m.role !== 'system')
-        .map((m) => ({ role: m.role, content: m.content }))
+      const history = messages.filter(m => m.role !== 'system').map(m => ({
+        role: m.role,
+        content: m.content,
+        products: m.products,
+      }))
 
-      const resp = await fetch('/api/chat', {
+      const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: trimmed,
-          mode,
+          message: text.trim(),
           storeCredentials: credentials,
-          history,
+          history: history.slice(-12),
+          cartId,
         }),
       })
 
-      const data: ChatResponse & { error?: string } = await resp.json()
+      if (!res.ok) throw new Error('Chat API error')
 
-      if (!resp.ok) {
-        throw new Error(data.error || 'Failed to get response')
-      }
-
-      const assistantMsg: ChatMessage = {
+      const data = await res.json()
+      const assistantMsg: ChatMessageType = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: data.message,
+        content: data.message || "I'm sorry, I couldn't process that. Could you try again?",
         timestamp: Date.now(),
         products: data.products,
+        cartState: data.cartState,
         checkoutUrl: data.checkoutUrl,
       }
+      setMessages(prev => [...prev, assistantMsg])
 
-      setMessages((prev) => [...prev, assistantMsg])
+      if (data.cartState) {
+        setCartState(data.cartState)
+        setCartId(data.cartState.cartId)
+      }
     } catch (err) {
-      const errorMsg: ChatMessage = {
+      setMessages(prev => [...prev, {
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: `Something went wrong: ${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`,
+        content: "Sorry, something went wrong. Please try again.",
         timestamp: Date.now(),
-      }
-      setMessages((prev) => [...prev, errorMsg])
+      }])
     } finally {
-      setIsLoading(false)
-      inputRef.current?.focus()
+      setLoading(false)
     }
+  }, [credentials, loading, messages, cartId])
+
+  const handleAddToCart = (product: ProductDetail, variant?: VariantDetail) => {
+    const variantText = variant ? ` — ${variant.name}` : ''
+    sendMessage(`Add ${product.title}${variantText} to my cart`)
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    sendMessage(input)
   }
-
-  function clearChat() {
-    setMessages([
-      {
-        id: 'welcome-reset',
-        role: 'system',
-        content: 'Chat cleared',
-        timestamp: Date.now(),
-      },
-    ])
-  }
-
-  const suggestions =
-    mode === 'admin'
-      ? [
-          'Show me all products',
-          'What\'s the total inventory?',
-          'Create a luxury perfume gift set',
-          'Update all prices by 10%',
-        ]
-      : [
-          'Recommend Valentine\'s gifts under $300',
-          'What gifts ship to India?',
-          'Show me birthday gift options',
-          'I want to buy the Star Map',
-        ]
 
   return (
     <div className="flex flex-col h-full">
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        {messages.map((msg) => (
-          <ChatMessageBubble key={msg.id} message={msg} />
+      {/* Messages area */}
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {messages.map(msg => (
+          <ChatMessage key={msg.id} message={msg} onAddToCart={handleAddToCart} />
         ))}
-        {isLoading && <TypingIndicator />}
+        {loading && (
+          <div className="flex justify-start mb-3">
+            <div className="bg-gray-100 rounded-2xl rounded-bl-md px-4 py-2.5">
+              <Loader2 className="w-4 h-4 animate-spin text-purple-600" />
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Suggestions (show when few messages) */}
-      {messages.length <= 1 && (
-        <div className="px-4 pb-2">
-          <div className="flex flex-wrap gap-2">
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setInput(s)
-                  inputRef.current?.focus()
-                }}
-                className="px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-brand-500/30 transition-colors"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+      {/* Suggestions */}
+      {messages.length <= 2 && (
+        <div className="px-4 pb-2 flex flex-wrap gap-1.5">
+          {SUGGESTIONS.map(s => (
+            <button
+              key={s}
+              onClick={() => sendMessage(s.replace(/^[^\w]+/, '').trim())}
+              className="text-xs bg-purple-50 text-purple-700 px-3 py-1.5 rounded-full hover:bg-purple-100 transition-colors"
+            >
+              {s}
+            </button>
+          ))}
         </div>
       )}
 
-      {/* Input */}
-      <div className="border-t border-[var(--border)] bg-[var(--bg-secondary)] p-4">
-        <div className="flex items-end gap-3 max-w-4xl mx-auto">
-          <button
-            onClick={clearChat}
-            className="flex-shrink-0 p-2.5 rounded-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] transition-colors"
-            title="Clear chat"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-
+      {/* Input bar */}
+      <div className="border-t p-3">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <div className="flex-1 relative">
-            <textarea
-              ref={inputRef}
+            <input
+              type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                mode === 'admin'
-                  ? 'Manage your store...'
-                  : 'Ask about gifts...'
-              }
-              rows={1}
-              className="w-full resize-none rounded-xl border border-[var(--border)] bg-[var(--bg-primary)] px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)]/50 focus:outline-none focus:border-brand-500/50 focus:ring-1 focus:ring-brand-500/20 transition-colors"
-              style={{
-                minHeight: '42px',
-                maxHeight: '120px',
-                height: 'auto',
-              }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement
-                target.style.height = 'auto'
-                target.style.height = `${Math.min(target.scrollHeight, 120)}px`
-              }}
+              onChange={e => setInput(e.target.value)}
+              placeholder="Ask about gifts, occasions, or products..."
+              className="w-full px-4 py-2.5 bg-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-purple-300 focus:bg-white outline-none transition-colors"
+              disabled={loading}
             />
           </div>
 
+          {/* Cart badge */}
+          {cartState && cartState.totalQuantity > 0 && (
+            <button
+              onClick={() => setShowCart(true)}
+              className="relative p-2.5 bg-purple-100 rounded-xl hover:bg-purple-200 transition-colors"
+            >
+              <ShoppingCart className="w-4 h-4 text-purple-600" />
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                {cartState.totalQuantity}
+              </span>
+            </button>
+          )}
+
           <button
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading}
-            className="flex-shrink-0 p-2.5 rounded-xl bg-brand-600 text-white hover:bg-brand-500 disabled:opacity-40 disabled:hover:bg-brand-600 transition-colors"
-          >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
+            type="submit"
+            disabled={!input.trim() || loading}
+            className={clsx(
+              'p-2.5 rounded-xl transition-colors',
+              input.trim() && !loading
+                ? 'bg-purple-600 text-white hover:bg-purple-700'
+                : 'bg-gray-200 text-gray-400'
             )}
+          >
+            <Send className="w-4 h-4" />
           </button>
-        </div>
+        </form>
       </div>
+
+      {/* Cart panel */}
+      <CartPanel
+        isOpen={showCart}
+        onClose={() => setShowCart(false)}
+        cartState={cartState}
+      />
     </div>
   )
 }

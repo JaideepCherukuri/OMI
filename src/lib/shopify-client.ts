@@ -11,11 +11,68 @@ import type {
   ShopifyShop,
   ShopifyLocation,
   ShopifyVariant,
-  ShopifyCheckout,
   ProductDetail,
   VariantDetail,
   StoreCredentials,
 } from '@/types'
+
+// Local checkout interface (legacy Admin API checkout)
+interface ShopifyCheckout {
+  token: string
+  web_url: string
+  line_items: Array<{
+    variant_id: number
+    quantity: number
+    title: string
+    price: string
+  }>
+  total_price: string
+  currency: string
+}
+
+// === Standalone helper: convert raw Shopify product to ProductDetail ===
+
+export function shopifyProductToDetail(product: ShopifyProduct): ProductDetail {
+  const variants: VariantDetail[] = product.variants.map(v => ({
+    variantId: v.id,
+    gid: `gid://shopify/ProductVariant/${v.id}`,
+    name: v.option1 || v.title || 'Default',
+    sku: v.sku || '',
+    price: parseFloat(v.price),
+    compareAtPrice: v.compare_at_price ? parseFloat(v.compare_at_price) : null,
+    inventoryQuantity: v.inventory_quantity || 0,
+    deliveryTime: null,
+    availableRegions: null,
+  }))
+
+  const images = (product.images || []).map(img => img.src)
+  const prices = variants.map(v => v.price).filter(p => p > 0)
+  const minP = prices.length > 0 ? Math.min(...prices) : 0
+  const maxP = prices.length > 0 ? Math.max(...prices) : 0
+  const priceRange = prices.length === 0
+    ? 'Price not available'
+    : minP === maxP ? `$${minP.toFixed(2)}` : `$${minP.toFixed(2)}–$${maxP.toFixed(2)}`
+
+  const totalStock = variants.reduce((sum, v) => sum + v.inventoryQuantity, 0)
+  const hasDiscount = variants.some(v => v.compareAtPrice !== null && v.compareAtPrice > v.price)
+  const tags = product.tags ? product.tags.split(',').map(t => t.trim()).filter(Boolean) : []
+
+  return {
+    productId: product.id,
+    title: product.title,
+    descriptionHtml: product.body_html || '',
+    vendor: product.vendor || '',
+    productType: product.product_type || '',
+    tags,
+    status: product.status || 'active',
+    handle: product.handle || '',
+    images,
+    variants,
+    priceRange,
+    totalStock,
+    hasDiscount,
+  }
+}
 
 export class ShopifyAPIError extends Error {
   constructor(
@@ -267,6 +324,15 @@ export class ShopifyClient {
   }
 
   // === High-level helpers ===
+
+  /**
+   * Get all products as ProductDetail[] using the fast shopifyProductToDetail helper.
+   * No metafield fetching — suitable for search/browse operations.
+   */
+  async getProductsFormatted(): Promise<ProductDetail[]> {
+    const rawProducts = await this.getProducts()
+    return rawProducts.map(shopifyProductToDetail)
+  }
 
   async fetchProductDetails(includeMetafields = false): Promise<ProductDetail[]> {
     const rawProducts = await this.getProducts()

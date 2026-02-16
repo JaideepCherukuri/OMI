@@ -60,27 +60,14 @@ export interface ShopifyLocation {
   country: string
 }
 
-export interface ShopifyCheckout {
-  token: string
-  web_url: string
-  line_items: Array<{
-    variant_id: number
-    quantity: number
-    title: string
-    price: string
-  }>
-  total_price: string
-  currency: string
-}
-
 // === App Types ===
-
-export type AppMode = 'admin' | 'user'
 
 export interface StoreCredentials {
   storeUrl: string
   accessToken: string
 }
+
+export type AppMode = 'user'
 
 export interface VariantDetail {
   variantId: number
@@ -91,6 +78,7 @@ export interface VariantDetail {
   inventoryQuantity: number
   deliveryTime: string | null
   availableRegions: string | null
+  gid?: string
 }
 
 export interface ProductDetail {
@@ -109,24 +97,86 @@ export interface ProductDetail {
   hasDiscount: boolean
 }
 
+// === Cart Types ===
+
+export interface CartLineItem {
+  lineId: string
+  variantId: string
+  productTitle: string
+  variantTitle: string
+  quantity: number
+  price: string
+  currency: string
+}
+
+export interface CartState {
+  cartId: string
+  checkoutUrl: string
+  lines: CartLineItem[]
+  totalAmount: string
+  currency: string
+  totalQuantity: number
+}
+
+// === Chat Types ===
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: number
+  source?: 'voice' | 'text' | 'system'
   products?: ProductDetail[]
   checkoutUrl?: string
+  cartState?: CartState
+  streaming?: boolean
+}
+
+export interface HistoryEntry {
+  role: string
+  content: string
+  products?: ProductDetail[]
 }
 
 export interface ChatRequest {
   message: string
-  mode: AppMode
   storeCredentials: StoreCredentials
-  history: Array<{ role: string; content: string }>
+  history: HistoryEntry[]
+  cartId?: string
 }
 
 export interface ChatResponse {
   message: string
   products?: ProductDetail[]
   checkoutUrl?: string
+  cartState?: CartState
 }
+
+// === Voice Types ===
+
+export type VoiceState = 'disconnected' | 'connecting' | 'idle' | 'listening' | 'thinking' | 'speaking'
+
+export type StageContent = 'welcome' | 'products' | 'product_detail' | 'cart' | 'checkout'
+
+export interface AgentProductsEvent {
+  type: 'products_found'
+  products: ProductDetail[]
+  query: string
+}
+
+export interface AgentCartEvent {
+  type: 'cart_updated'
+  cart: CartState
+}
+
+export interface AgentCheckoutEvent {
+  type: 'checkout_ready'
+  url: string
+}
+
+export interface AgentProductDetailEvent {
+  type: 'product_detail'
+  product: ProductDetail
+}
+
+export type AgentDataEvent = AgentProductsEvent | AgentCartEvent | AgentCheckoutEvent | AgentProductDetailEvent
