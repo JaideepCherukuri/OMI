@@ -95,6 +95,11 @@ export interface ProductDetail {
   priceRange: string
   totalStock: number
   hasDiscount: boolean
+  // Global Catalog MCP fields (present for products from cross-merchant search)
+  isGlobal?: boolean
+  shopName?: string
+  shopUrl?: string
+  directCheckoutUrl?: string
 }
 
 // === Cart Types ===

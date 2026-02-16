@@ -6,6 +6,8 @@
 import { ShopifyClient } from './shopify-client'
 import { ShopifyMCPClient } from './mcp-client'
 import type { MCPProduct } from './mcp-client'
+import { CatalogMCPClient } from './catalog-mcp'
+import type { CatalogOffer } from './catalog-mcp'
 import { getToolsForMode } from './tools'
 import type {
   StoreCredentials,
@@ -176,7 +178,10 @@ CRITICAL FORMATTING RULES:
 10. When a user says "the first one" or "that rose one", match to products from your last search.
 11. After showing products, ask if they'd like to add something to cart or need more details.
 12. Be genuine and helpful — like a knowledgeable friend at a boutique gift shop.
-13. NEVER output [Products shown...] or similar internal annotations.`
+13. NEVER output [Products shown...] or similar internal annotations.
+14. Use search_products for gifts from OUR store. Use search_global_products for broader searches across ALL Shopify stores — great for niche items or when the user wants to explore beyond our catalog.
+15. When showing global results, ALWAYS mention the store/shop name in your response text.
+16. Global products have direct checkout URLs — users can buy directly from those shops via Shop Pay. Mention the shop name when referencing global products.`
 
 interface GeminiMessage {
   role: string
@@ -227,6 +232,84 @@ function mcpProductToDetail(mp: MCPProduct): ProductDetail {
     totalStock: (mp.variants || []).filter(v => v.available).length * 10,
     hasDiscount: false,
   }
+}
+
+/**
+ * Convert a Catalog MCP global offer → our ProductDetail type.
+ * Enriches with shopName, shopUrl, directCheckoutUrl, isGlobal flag.
+ */
+function catalogOfferToDetail(offer: CatalogOffer): ProductDetail {
+  const firstProduct = offer.products?.[0]
+  const shopName = firstProduct?.shop?.name || ''
+  const shopUrl = firstProduct?.shop?.onlineStoreUrl || ''
+  const checkoutUrl = firstProduct?.checkoutUrl || ''
+  const imageUrl =
+    offer.images?.[0]?.url ||
+    firstProduct?.featuredImage?.url ||
+    ''
+  const price = firstProduct?.price
+    ? parseFloat(firstProduct.price.amount)
+    : parseFloat(offer.priceRange?.min?.amount || '0')
+  const variantId = firstProduct?.selectedProductVariant?.id || firstProduct?.id || offer.id
+
+  return {
+    productId: Math.abs(hashString(offer.id || offer.title)),
+    title: offer.title || '',
+    descriptionHtml: offer.description || firstProduct?.description || '',
+    vendor: shopName,
+    productType: '',
+    tags: [],
+    status: 'active',
+    handle: '',
+    images: imageUrl ? [imageUrl] : [],
+    variants: [{
+      variantId: Math.abs(hashString(variantId)),
+      gid: variantId,
+      name: 'Default',
+      sku: '',
+      price,
+      compareAtPrice: null,
+      inventoryQuantity: offer.availableForSale ? 10 : 0,
+      deliveryTime: null,
+      availableRegions: null,
+    }],
+    priceRange:
+      offer.priceRange
+        ? `$${parseFloat(offer.priceRange.min.amount).toFixed(2)}` +
+          (offer.priceRange.min.amount !== offer.priceRange.max.amount
+            ? `–$${parseFloat(offer.priceRange.max.amount).toFixed(2)}`
+            : '')
+        : `$${price.toFixed(2)}`,
+    totalStock: offer.availableForSale ? 10 : 0,
+    hasDiscount: false,
+    // Global catalog fields
+    isGlobal: true,
+    shopName,
+    shopUrl,
+    directCheckoutUrl: checkoutUrl,
+  }
+}
+
+/** Simple string hash for generating stable numeric IDs from GID strings */
+function hashString(str: string): number {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash |= 0 // Convert to 32-bit integer
+  }
+  return hash
+}
+
+// Singleton Catalog MCP client (server-side, reused across requests)
+let catalogClient: CatalogMCPClient | null = null
+function getCatalogClient(): CatalogMCPClient | null {
+  if (catalogClient) return catalogClient
+  const id = process.env.SHOPIFY_CATALOG_CLIENT_ID
+  const secret = process.env.SHOPIFY_CATALOG_CLIENT_SECRET
+  if (!id || !secret) return null
+  catalogClient = new CatalogMCPClient(id, secret)
+  return catalogClient
 }
 
 export async function chat(
@@ -617,6 +700,53 @@ export async function chat(
               totalStock: p.totalStock,
             })),
             count: allProducts.length,
+          }
+          break
+        }
+
+        case 'search_global_products': {
+          const gQuery = (fnArgs.query as string) || ''
+          const gMaxPrice = fnArgs.max_price as number | undefined
+          const gMinPrice = fnArgs.min_price as number | undefined
+
+          const catClient = getCatalogClient()
+          if (!catClient) {
+            toolResult = { error: 'Global catalog search is not configured.', products: [], count: 0 }
+            break
+          }
+
+          try {
+            const offers = await catClient.searchProducts(
+              gQuery,
+              `User is looking for: ${gQuery}`,
+              {
+                limit: 6,
+                maxPrice: gMaxPrice,
+                minPrice: gMinPrice,
+                availableForSale: true,
+              }
+            )
+
+            const globalProducts = offers.map(o => catalogOfferToDetail(o))
+            foundProducts = [...foundProducts, ...globalProducts]
+
+            toolResult = {
+              products: globalProducts.map(p => ({
+                title: p.title,
+                priceRange: p.priceRange,
+                shopName: p.shopName,
+                shopUrl: p.shopUrl,
+                directCheckoutUrl: p.directCheckoutUrl,
+                isGlobal: true,
+              })),
+              count: globalProducts.length,
+              message: globalProducts.length > 0
+                ? `Found ${globalProducts.length} products from Shopify merchants worldwide for "${gQuery}"`
+                : `No global results found for "${gQuery}". Try a different search.`,
+            }
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : 'Global search failed'
+            toolResult = { error: errMsg, products: [], count: 0 }
           }
           break
         }

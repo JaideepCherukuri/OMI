@@ -66,6 +66,29 @@ export const userTools = [
       properties: {},
     },
   },
+  {
+    name: 'search_global_products',
+    description:
+      'Search across ALL Shopify stores worldwide for products. Use for broad discovery, when the user wants to compare options across merchants, or for products our store doesn\'t carry. Results include shop name and direct checkout URLs.',
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query (e.g. "matcha tea set", "leather journal")',
+        },
+        max_price: {
+          type: 'number',
+          description: 'Maximum price in USD (optional)',
+        },
+        min_price: {
+          type: 'number',
+          description: 'Minimum price in USD (optional)',
+        },
+      },
+      required: ['query'],
+    },
+  },
 ]
 
 export function getToolsForMode(_mode: string = 'user') {

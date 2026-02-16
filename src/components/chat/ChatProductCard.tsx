@@ -14,7 +14,7 @@
 
 import { useState } from 'react'
 import type { ProductDetail, VariantDetail } from '@/types'
-import { ShoppingCart, Star } from 'lucide-react'
+import { ShoppingCart, Star, ExternalLink } from 'lucide-react'
 import clsx from 'clsx'
 
 interface ChatProductCardProps {
@@ -85,34 +85,68 @@ export default function ChatProductCard({
           <div className="absolute inset-0 bg-gray-100 animate-pulse" />
         )}
 
-        {/* Sale badge */}
-        {product.hasDiscount && (
+        {/* Badges: Sale or Global Catalog */}
+        {product.isGlobal ? (
+          <span className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-0.5">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Shopify Catalog
+          </span>
+        ) : product.hasDiscount ? (
           <span className="absolute top-2 left-2 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
             Sale
           </span>
-        )}
+        ) : null}
 
         {/* Dual action buttons — always visible on all screen sizes */}
         <div className="absolute bottom-2 left-2 right-2 flex gap-1.5 opacity-100">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onBuyNow?.(product, defaultVariant)
-            }}
-            className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition-colors"
-          >
-            Buy now
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onAddToCart?.(product, defaultVariant)
-            }}
-            className="flex items-center gap-1 py-1.5 px-3 bg-white/95 hover:bg-white text-gray-800 text-xs font-medium rounded-lg border border-gray-200 transition-colors"
-          >
-            <ShoppingCart size={12} />
-            <span>Add to cart</span>
-          </button>
+          {product.isGlobal && product.directCheckoutUrl ? (
+            <>
+              <a
+                href={product.directCheckoutUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-[#5A31F4] hover:bg-[#4926c7] text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2C6.81 2 3 5.81 3 10.5S6.81 19 11.5 19h.5v3c4.86-2.34 8-7 8-11.5C20 5.81 16.19 2 11.5 2zm1 14.5h-2v-2h2v2zm0-3.5h-2c0-3.25 3-3 3-5 0-1.1-.9-2-2-2s-2 .9-2 2h-2c0-2.21 1.79-4 4-4s4 1.79 4 4c0 2.5-3 2.75-3 5z"/></svg>
+                Shop Pay
+              </a>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (product.directCheckoutUrl) {
+                    window.open(product.directCheckoutUrl, '_blank', 'noopener,noreferrer')
+                  }
+                }}
+                className="flex items-center gap-1 py-1.5 px-3 bg-white/95 hover:bg-white text-gray-800 text-xs font-medium rounded-lg border border-gray-200 transition-colors"
+              >
+                <ExternalLink size={12} />
+                <span>Visit shop</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onBuyNow?.(product, defaultVariant)
+                }}
+                className="flex-1 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                Buy now
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onAddToCart?.(product, defaultVariant)
+                }}
+                className="flex items-center gap-1 py-1.5 px-3 bg-white/95 hover:bg-white text-gray-800 text-xs font-medium rounded-lg border border-gray-200 transition-colors"
+              >
+                <ShoppingCart size={12} />
+                <span>Add to cart</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -133,9 +167,16 @@ export default function ChatProductCard({
 
         {/* Store name + rating */}
         <div className="flex items-center justify-between mt-1.5">
-          <span className="text-[11px] text-gray-400 truncate">
-            {product.vendor || 'Store'}
-          </span>
+          {product.isGlobal && product.shopName ? (
+            <span className="text-[11px] text-emerald-600 font-medium truncate flex items-center gap-0.5">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+              {product.shopName}
+            </span>
+          ) : (
+            <span className="text-[11px] text-gray-400 truncate">
+              {product.vendor || 'Store'}
+            </span>
+          )}
           <div className="flex items-center gap-0.5">
             <Star size={11} className="text-amber-400 fill-amber-400" />
             <span className="text-[11px] text-gray-500 font-medium">
