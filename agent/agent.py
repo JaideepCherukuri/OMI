@@ -189,9 +189,14 @@ async def accept_all_jobs(req):
 
 
 if __name__ == "__main__":
+    # Cloud Run sets PORT=8080 for health checks.
+    # LiveKit agent's built-in HTTP server must listen on this port.
+    http_port = int(os.environ.get("PORT", 8080))
+
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             request_fnc=accept_all_jobs,
+            port=http_port,
         )
     )

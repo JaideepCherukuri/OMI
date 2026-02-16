@@ -16,9 +16,9 @@ COPY agent.py .
 COPY shopify_tools.py .
 COPY catalog_mcp.py .
 
-# LiveKit agents SDK has a built-in HTTP health server.
-# Cloud Run needs a PORT to health-check against.
+# Cloud Run health checks on $PORT (default 8080)
+# agent.py reads PORT env and binds LiveKit's HTTP health server to it
 ENV PORT=8080
 
-# Start in production mode ("start" not "dev")
+# Start agent in production mode
 CMD ["python", "agent.py", "start"]
