@@ -506,3 +506,45 @@ These are fictional personas used for structured review. When doing an audit, si
 ---
 
 *This document was created by Viktor on Feb 16, 2026 based on the complete Slack thread and all work done during the session.*
+
+---
+
+## 18. GCP CLOUD RUN DEPLOYMENT (Completed Feb 16, 2026)
+
+The Python LiveKit voice agent is now deployed and running on GCP Cloud Run.
+
+| Field | Value |
+|-------|-------|
+| Service URL | `https://giftai-voice-agent-1034579588738.us-central1.run.app` |
+| Revision | `giftai-voice-agent-00004-npb` |
+| Project ID | `gen-lang-client-0105190198` |
+| Region | `us-central1` |
+| Memory | 1Gi |
+| CPU | 1 (always-on, no throttling) |
+| Min instances | 1 (agent always running) |
+| Max instances | 1 |
+| Service Account | `viktor-deploy@gen-lang-client-0105190198.iam.gserviceaccount.com` |
+
+### Deployment Issues & Fixes
+1. **Service account permissions**: Needed Artifact Registry Admin, Cloud Build Editor, Cloud Run Admin, Service Account User roles.
+2. **Port binding**: LiveKit agent's HTTP health server defaults to port 8081 in production, but Cloud Run health-checks port 8080. Fixed by reading `PORT` env var in `agent.py`.
+3. **Cloud Resource Manager API**: Not enabled, but not needed — deploy works without it (just shows warnings).
+
+### How to Redeploy
+```bash
+cd agent/
+export PATH="/opt/google-cloud-sdk/bin:$PATH"
+gcloud auth activate-service-account --key-file=<path-to-key.json>
+gcloud config set project gen-lang-client-0105190198
+gcloud run deploy giftai-voice-agent \
+  --project=gen-lang-client-0105190198 \
+  --region=us-central1 \
+  --source=. \
+  --no-allow-unauthenticated \
+  --set-env-vars="LIVEKIT_URL=wss://halo-mcp-2tbjr4ch.livekit.cloud,LIVEKIT_API_KEY=API34HHb6JLeH6E,..." \
+  --memory=1Gi --cpu=1 --min-instances=1 --max-instances=1 \
+  --timeout=3600 --no-cpu-throttling --execution-environment=gen2 --quiet
+```
+
+### Env Vars on Cloud Run
+All 8 env vars are set: LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, GOOGLE_API_KEY, SHOPIFY_STORE_URL, SHOPIFY_ACCESS_TOKEN, SHOPIFY_CATALOG_CLIENT_ID, SHOPIFY_CATALOG_CLIENT_SECRET.
