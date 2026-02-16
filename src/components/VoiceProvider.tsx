@@ -91,10 +91,11 @@ export function useVoice(): VoiceContextValue {
 
 interface VoiceProviderProps {
   storeCredentials: StoreCredentials
+  searchMode?: 'global' | 'storefront'
   children: React.ReactNode
 }
 
-export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps) {
+export function VoiceProvider({ storeCredentials, searchMode = 'storefront', children }: VoiceProviderProps) {
   // ── LiveKit connection state ───────────────
   const [token, setToken] = useState('')
   const [serverUrl, setServerUrl] = useState('')
@@ -173,6 +174,7 @@ export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps
             cartId: cartState?.cartId,
             cartState: cartState,
             mcpSessionId,
+            searchMode,
           }),
         })
 
@@ -218,7 +220,7 @@ export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps
         setIsTextLoading(false)
       }
     },
-    [messages, storeCredentials, cartState],
+    [messages, storeCredentials, cartState, searchMode],
   )
 
   // ── Send text message (voice data channel or text API) ──

@@ -35,7 +35,9 @@ import VoiceControls from '@/components/VoiceControls'
 import StoreSwapModal from '@/components/StoreSwapModal'
 import Orb from '@/components/Orb'
 import type { StoreCredentials, ProductDetail, VariantDetail, ChatMessage as ChatMessageType } from '@/types'
-import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight, Globe, Store } from 'lucide-react'
+
+export type SearchMode = 'global' | 'storefront'
 
 // ═══════════════════════════════════════════
 // Main Page (with store credentials)
@@ -65,13 +67,17 @@ export default function Home() {
     )
   }
 
+  const [searchMode, setSearchMode] = useState<SearchMode>('storefront')
+
   return (
-    <VoiceProvider storeCredentials={storeCredentials}>
+    <VoiceProvider storeCredentials={storeCredentials} searchMode={searchMode}>
       <GiftAIApp
         storeCredentials={storeCredentials}
         onStoreChange={(creds) => {
           setStoreCredentials(creds)
         }}
+        searchMode={searchMode}
+        onSearchModeChange={setSearchMode}
       />
     </VoiceProvider>
   )
@@ -84,9 +90,13 @@ export default function Home() {
 function GiftAIApp({
   storeCredentials,
   onStoreChange,
+  searchMode,
+  onSearchModeChange,
 }: {
   storeCredentials: StoreCredentials
   onStoreChange: (creds: StoreCredentials) => void
+  searchMode: SearchMode
+  onSearchModeChange: (mode: SearchMode) => void
 }) {
   const voice = useVoice()
   const [storeSwapOpen, setStoreSwapOpen] = useState(false)
@@ -290,6 +300,32 @@ function GiftAIApp({
                 {storeCredentials.storeUrl}
               </p>
             </div>
+          </div>
+
+          {/* Center: Search mode toggle */}
+          <div className="flex items-center bg-gray-100 rounded-full p-0.5">
+            <button
+              onClick={() => onSearchModeChange('storefront')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                searchMode === 'storefront'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Store size={13} />
+              <span className="hidden sm:inline">Our Store</span>
+            </button>
+            <button
+              onClick={() => onSearchModeChange('global')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+                searchMode === 'global'
+                  ? 'bg-purple-600 text-white shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Globe size={13} />
+              <span className="hidden sm:inline">All Shopify</span>
+            </button>
           </div>
 
           {/* Right: Actions */}

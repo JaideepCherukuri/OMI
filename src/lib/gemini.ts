@@ -179,9 +179,10 @@ CRITICAL FORMATTING RULES:
 11. After showing products, ask if they'd like to add something to cart or need more details.
 12. Be genuine and helpful — like a knowledgeable friend at a boutique gift shop.
 13. NEVER output [Products shown...] or similar internal annotations.
-14. Use search_products for gifts from OUR store. Use search_global_products for broader searches across ALL Shopify stores — great for niche items or when the user wants to explore beyond our catalog.
-15. When showing global results, ALWAYS mention the store/shop name in your response text.
-16. Global products have direct checkout URLs — users can buy directly from those shops via Shop Pay. Mention the shop name when referencing global products.`
+14. The user controls which catalog to search via a toggle in the UI. Use whichever search tool is available to you.
+15. When showing results from global Shopify catalog, ALWAYS mention the store/shop name in your response text.
+16. Global products have direct checkout URLs — users can buy directly from those shops via Shop Pay. Mention the shop name when referencing global products.
+17. When in global mode, use search_global_products for ALL product searches. When in storefront mode, use search_products for ALL product searches.`
 
 interface GeminiMessage {
   role: string
@@ -318,11 +319,25 @@ export async function chat(
   history: HistoryEntry[] = [],
   cartId?: string,
   clientCartState?: CartState,
-  mcpSessionId?: string
+  mcpSessionId?: string,
+  searchMode?: 'global' | 'storefront'
 ): Promise<ChatResponse> {
   const shopifyClient = new ShopifyClient(credentials)
   const mcpClient = new ShopifyMCPClient(credentials.storeUrl, mcpSessionId)
-  const tools = getToolsForMode('user')
+  const allTools = getToolsForMode('user')
+
+  // Filter tools based on search mode — toggle decides, not the AI
+  const tools = allTools.filter(t => {
+    if (searchMode === 'global') {
+      // In global mode: remove local search (search_products, list_products), keep everything else
+      return t.name !== 'search_products' && t.name !== 'list_products'
+    }
+    if (searchMode === 'storefront') {
+      // In storefront mode: remove global search
+      return t.name !== 'search_global_products'
+    }
+    return true // default: all tools
+  })
 
   let currentCartId = cartId || ''
   let cartState: CartState | undefined = clientCartState || undefined
