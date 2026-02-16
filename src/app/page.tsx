@@ -3,43 +3,39 @@
 /**
  * GiftAI — Voice-First Gift Shopping
  *
- * Layout (per PRD Round 2 — "Stage + Transcript" pattern, won 2:1 in user tests):
+ * Layout v2 (Shopify-inspired chat-first):
  *
  *   ┌──────────────────────────────┐
- *   │ Header                       │
+ *   │ Header (GiftAI + Cart badge) │
  *   ├──────────────────────────────┤
  *   │                              │
- *   │   STAGE (~60%)               │
- *   │   Orb (welcome) / Products   │
- *   │   / Cart / Checkout          │
+ *   │   CHAT FLOW (scrollable)     │
+ *   │   ● AI messages              │
+ *   │   [User bubbles]             │
+ *   │   [Product cards inline]     │
+ *   │   [Cart widgets inline]      │
  *   │                              │
  *   ├──────────────────────────────┤
- *   │   TRANSCRIPT (compact)       │
- *   │   Recent messages            │
+ *   │   Suggestion Chips           │
  *   ├──────────────────────────────┤
- *   │   Suggestions (contextual)   │
- *   ├──────────────────────────────┤
- *   │   Input + Voice Controls     │
+ *   │   Input + 🎤 Voice Orb      │
  *   └──────────────────────────────┘
  *
- * The VoiceProvider wraps everything, managing LiveKit connection and unified
- * conversation state for both voice and text modalities.
+ *   + ProductDetailPanel (right-side slide-in)
+ *   + CheckoutModal (overlay)
+ *
+ * Products, cart widgets, and checkout render INLINE in the chat flow,
+ * inspired by Shopify's Agentic Commerce demo (Feb 2026).
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { VoiceProvider, useVoice } from '@/components/VoiceProvider'
-import Stage from '@/components/Stage'
-import TranscriptStream from '@/components/TranscriptStream'
+import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal } from '@/components/chat'
 import VoiceControls from '@/components/VoiceControls'
-import CartPanel from '@/components/CartPanel'
 import StoreSwapModal from '@/components/StoreSwapModal'
 import Orb from '@/components/Orb'
-import type { StoreCredentials, VoiceState } from '@/types'
-import {
-  ShoppingCart,
-  Settings,
-  ArrowRightLeft,
-} from 'lucide-react'
+import type { StoreCredentials, ProductDetail, VariantDetail, ChatMessage as ChatMessageType } from '@/types'
+import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 
 // ═══════════════════════════════════════════
 // Main Page (with store credentials)
@@ -52,7 +48,6 @@ export default function Home() {
   })
   const [isConnected, setIsConnected] = useState(false)
 
-  // Auto-connect if credentials are in env vars
   useEffect(() => {
     if (storeCredentials.accessToken) {
       setIsConnected(true)
@@ -83,7 +78,7 @@ export default function Home() {
 }
 
 // ═══════════════════════════════════════════
-// Main App Layout (inside VoiceProvider)
+// Main App — Chat-First Layout
 // ═══════════════════════════════════════════
 
 function GiftAIApp({
@@ -94,18 +89,26 @@ function GiftAIApp({
   onStoreChange: (creds: StoreCredentials) => void
 }) {
   const voice = useVoice()
-  const [cartOpen, setCartOpen] = useState(false)
   const [storeSwapOpen, setStoreSwapOpen] = useState(false)
   const [textInput, setTextInput] = useState('')
+  const [detailProduct, setDetailProduct] = useState<ProductDetail | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const chatEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // ── Contextual suggestions (PRD 3.6.2) ──
+  // Auto-scroll to bottom on new messages or products
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [voice.messages.length, voice.products.length, voice.cartState])
+
+  // ── Contextual suggestions ──
   const suggestions = useMemo(() => {
-    if (voice.products.length > 0 && voice.stageContent === 'products') {
+    if (voice.products.length > 0) {
       return [
         { label: '🛒 Add first one', action: 'add_first' },
         { label: '💡 Tell me more', action: 'tell_more' },
-        { label: '💰 Show cheaper', action: 'cheaper' },
+        { label: '💰 Cheaper options', action: 'cheaper' },
         { label: '🎁 More options', action: 'more' },
       ]
     }
@@ -113,23 +116,22 @@ function GiftAIApp({
       return [
         { label: '✅ Checkout', action: 'checkout' },
         { label: '🛍️ Keep shopping', action: 'keep_shopping' },
-        { label: '🛒 View cart', action: 'view_cart' },
       ]
     }
     if (voice.messages.length <= 1) {
       return [
-        { label: "💝 Valentine's gifts", action: 'search_valentines' },
+        { label: '💝 Valentine\'s gifts', action: 'search_valentines' },
         { label: '🎂 Birthday ideas', action: 'search_birthday' },
         { label: '💍 Wedding gifts', action: 'search_wedding' },
         { label: '✨ Show everything', action: 'search_all' },
       ]
     }
     return []
-  }, [voice.products, voice.cartState, voice.messages, voice.stageContent])
+  }, [voice.products, voice.cartState, voice.messages])
 
   const handleSuggestion = useCallback(
     async (action: string) => {
-      const actionMap: Record<string, string> = {
+      const map: Record<string, string> = {
         add_first: voice.products[0]?.title
           ? `Add ${voice.products[0].title} to my cart`
           : 'Add the first one to my cart',
@@ -140,19 +142,16 @@ function GiftAIApp({
         more: 'Show me more gift options',
         checkout: 'Checkout please',
         keep_shopping: 'Show me more gifts',
-        view_cart: "What's in my cart?",
         search_valentines: "Show me Valentine's Day gifts",
         search_birthday: 'Birthday gift ideas',
         search_wedding: 'Wedding gift suggestions',
         search_all: 'Show me everything you have',
       }
-      const msg = actionMap[action] || action
-      await voice.sendTextMessage(msg)
+      await voice.sendTextMessage(map[action] || action)
     },
     [voice],
   )
 
-  // ── Text input submit ──
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault()
@@ -164,118 +163,242 @@ function GiftAIApp({
     [textInput, voice],
   )
 
-  // ── Typing-pauses-mic behavior (PRD 3.6.1) ──
+  // ── Product actions ──
+  const handleProductClick = useCallback((product: ProductDetail) => {
+    setDetailProduct(product)
+    setDetailOpen(true)
+  }, [])
+
+  const handleAddToCart = useCallback(
+    (product: ProductDetail, variant?: VariantDetail) => {
+      const msg = variant && variant.name !== 'Default Title'
+        ? `Add ${product.title} (${variant.name}) to my cart`
+        : `Add ${product.title} to my cart`
+      voice.sendTextMessage(msg)
+    },
+    [voice],
+  )
+
+  const handleBuyNow = useCallback(
+    (product: ProductDetail, variant?: VariantDetail) => {
+      const msg = variant && variant.name !== 'Default Title'
+        ? `I want to buy ${product.title} (${variant.name})`
+        : `I want to buy ${product.title}`
+      voice.sendTextMessage(msg)
+    },
+    [voice],
+  )
+
+  // ── Typing-pauses-mic ──
   const handleInputFocus = useCallback(() => {
     if (voice.voiceConnected && voice.micEnabled) {
-      // Auto-pause mic when typing
       voice.toggleMic()
     }
   }, [voice])
 
   const handleInputBlur = useCallback(() => {
     if (voice.voiceConnected && !voice.micEnabled && !textInput) {
-      // Resume mic when done typing (if input is empty)
       voice.toggleMic()
     }
   }, [voice, textInput])
 
   const cartBadge = voice.cartState?.totalQuantity || 0
 
+  // ── Interleave messages with product cards and cart widgets ──
+  const chatItems = useMemo(() => {
+    const items: Array<{
+      type: 'message' | 'products' | 'cart'
+      data: any
+      key: string
+    }> = []
+
+    let productsInserted = false
+    let cartInserted = false
+
+    for (const msg of voice.messages) {
+      items.push({ type: 'message', data: msg, key: `msg-${msg.id}` })
+
+      // After AI mentions products, insert product cards
+      if (
+        !productsInserted &&
+        msg.role === 'assistant' &&
+        voice.products.length > 0 &&
+        (msg.content.toLowerCase().includes('found') ||
+          msg.content.toLowerCase().includes('option') ||
+          msg.content.toLowerCase().includes('product') ||
+          msg.content.toLowerCase().includes('here'))
+      ) {
+        items.push({
+          type: 'products',
+          data: voice.products,
+          key: `products-${msg.id}`,
+        })
+        productsInserted = true
+      }
+
+      // After AI mentions cart, insert cart widget
+      if (
+        !cartInserted &&
+        msg.role === 'assistant' &&
+        voice.cartState &&
+        voice.cartState.totalQuantity > 0 &&
+        (msg.content.toLowerCase().includes('cart') ||
+          msg.content.toLowerCase().includes('added') ||
+          msg.content.toLowerCase().includes('checkout'))
+      ) {
+        items.push({
+          type: 'cart',
+          data: voice.cartState,
+          key: `cart-${msg.id}`,
+        })
+        cartInserted = true
+      }
+    }
+
+    // If products exist but weren't inserted after a message, add at the end
+    if (!productsInserted && voice.products.length > 0) {
+      items.push({
+        type: 'products',
+        data: voice.products,
+        key: 'products-end',
+      })
+    }
+
+    // Same for cart
+    if (!cartInserted && voice.cartState && voice.cartState.totalQuantity > 0) {
+      items.push({
+        type: 'cart',
+        data: voice.cartState,
+        key: 'cart-end',
+      })
+    }
+
+    return items
+  }, [voice.messages, voice.products, voice.cartState])
+
   return (
-    <div className="h-dvh flex flex-col bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white overflow-hidden">
+    <div className="h-dvh flex flex-col bg-gray-50 text-gray-900 overflow-hidden">
       {/* ── Header ────────────────────────────── */}
-      <header className="flex-shrink-0 px-4 py-3 border-b border-white/10 bg-gray-900/90 backdrop-blur-sm">
+      <header className="flex-shrink-0 px-4 py-3 bg-white border-b border-gray-200">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
-          {/* Left: Logo + store */}
+          {/* Left: Logo + Orb */}
           <div className="flex items-center gap-3">
             <Orb state={voice.voiceState} size="sm" />
             <div>
-              <h1 className="text-lg font-semibold bg-gradient-to-r from-purple-300 to-fuchsia-300 bg-clip-text text-transparent">
-                GiftAI
-              </h1>
-              <p className="text-xs text-gray-500 truncate max-w-[180px]">
+              <h1 className="text-lg font-bold text-gray-900">GiftAI</h1>
+              <p className="text-[11px] text-gray-400 truncate max-w-[180px]">
                 {storeCredentials.storeUrl}
               </p>
             </div>
           </div>
 
           {/* Right: Actions */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCartOpen(true)}
-              className="relative p-2 rounded-lg hover:bg-white/10 transition-colors"
-              title="View cart"
-            >
-              <ShoppingCart size={20} className="text-gray-400" />
-              {cartBadge > 0 && (
-                <span className="absolute -top-1 -right-1 w-5 h-5 bg-fuchsia-500 text-[10px] font-bold rounded-full flex items-center justify-center">
-                  {cartBadge}
-                </span>
-              )}
-            </button>
+          <div className="flex items-center gap-1">
             <button
               onClick={() => setStoreSwapOpen(true)}
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
               title="Switch store"
             >
               <ArrowRightLeft size={18} className="text-gray-400" />
+            </button>
+            <button
+              onClick={() => {
+                if (voice.cartState?.checkoutUrl) {
+                  setCheckoutOpen(true)
+                }
+              }}
+              className="relative p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              title="Cart"
+            >
+              <ShoppingBag size={20} className="text-gray-600" />
+              {cartBadge > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-purple-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {cartBadge}
+                </span>
+              )}
             </button>
           </div>
         </div>
       </header>
 
-      {/* ── Stage Area (~60%) ─────────────────── */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <div className="h-full max-w-3xl mx-auto flex flex-col">
-          {/* Stage: top 60% */}
-          <div className="flex-[3] min-h-0 overflow-auto px-4 py-4">
-            <Stage
-              content={voice.stageContent}
-              voiceState={voice.voiceState}
-              products={voice.products}
-              cartState={voice.cartState}
-              highlightedProductId={voice.highlightedProductId}
-              onAddToCart={(product, variant) => {
-                if (voice.voiceConnected) {
-                  voice.sendUiAction('add_to_cart', {
-                    productTitle: product.title,
-                    variantTitle: variant?.name,
-                  })
-                } else {
-                  voice.sendTextMessage(`Add ${product.title} to my cart`)
-                }
-              }}
-              onProductClick={(product) => {
-                if (voice.voiceConnected) {
-                  voice.sendUiAction('view_details', {
-                    productTitle: product.title,
-                  })
-                } else {
-                  voice.sendTextMessage(`Tell me about ${product.title}`)
-                }
-              }}
-              onConnect={voice.connectVoice}
-            />
-          </div>
-
-          {/* Transcript: bottom 40% */}
-          <div className="flex-[2] min-h-0 border-t border-white/5">
-            <div className="h-full overflow-auto px-4 py-2">
-              <TranscriptStream messages={voice.messages} />
+      {/* ── Chat Flow ─────────────────────────── */}
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div className="max-w-3xl mx-auto px-4 py-4 space-y-1">
+          {/* Welcome state (no messages yet) */}
+          {voice.messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-16 gap-6">
+              <Orb
+                state={voice.voiceState}
+                size="lg"
+                onClick={() => {
+                  if (voice.voiceState === 'disconnected') {
+                    voice.connectVoice()
+                  }
+                }}
+              />
+              <div className="text-center space-y-2">
+                <h2 className="text-xl font-semibold text-gray-800">
+                  What are you looking for?
+                </h2>
+                <p className="text-sm text-gray-500 max-w-xs">
+                  {voice.voiceState === 'disconnected'
+                    ? 'Tap the mic to start voice shopping, or type below'
+                    : 'Listening... tell me what gift you need'}
+                </p>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Chat items (messages + inline products + inline cart) */}
+          {chatItems.map((item) => {
+            if (item.type === 'message') {
+              return <ChatMessage key={item.key} message={item.data} />
+            }
+
+            if (item.type === 'products') {
+              const products = item.data as ProductDetail[]
+              return (
+                <div key={item.key} className="py-3">
+                  <ProductCarouselInline
+                    products={products}
+                    onProductClick={handleProductClick}
+                    onAddToCart={handleAddToCart}
+                    onBuyNow={handleBuyNow}
+                    highlightedProductId={voice.highlightedProductId}
+                  />
+                </div>
+              )
+            }
+
+            if (item.type === 'cart') {
+              return (
+                <div key={item.key} className="py-2 max-w-lg">
+                  <InlineCartWidget
+                    cartState={item.data}
+                    storeName={storeCredentials.storeUrl.replace('.myshopify.com', '')}
+                    onCheckout={() => setCheckoutOpen(true)}
+                  />
+                </div>
+              )
+            }
+
+            return null
+          })}
+
+          {/* Scroll anchor */}
+          <div ref={chatEndRef} />
         </div>
       </div>
 
-      {/* ── Suggestions ───────────────────────── */}
+      {/* ── Suggestion Chips ──────────────────── */}
       {suggestions.length > 0 && (
-        <div className="flex-shrink-0 px-4 py-2 border-t border-white/5">
-          <div className="max-w-3xl mx-auto flex gap-2 overflow-x-auto pb-1">
+        <div className="flex-shrink-0 px-4 py-2 border-t border-gray-200 bg-white">
+          <div className="max-w-3xl mx-auto flex gap-2 overflow-x-auto pb-0.5">
             {suggestions.map((s) => (
               <button
                 key={s.action}
                 onClick={() => handleSuggestion(s.action)}
-                className="flex-shrink-0 px-3 py-1.5 text-sm bg-white/5 hover:bg-white/10 border border-white/10 rounded-full transition-colors text-gray-300"
+                className="flex-shrink-0 px-3.5 py-1.5 text-sm bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-full transition-colors text-gray-700"
               >
                 {s.label}
               </button>
@@ -284,11 +407,10 @@ function GiftAIApp({
         </div>
       )}
 
-      {/* ── Input + Voice Controls ────────────── */}
-      <div className="flex-shrink-0 px-4 py-3 border-t border-white/10 bg-gray-900/90 backdrop-blur-sm">
+      {/* ── Input + Voice ─────────────────────── */}
+      <div className="flex-shrink-0 px-4 py-3 bg-white border-t border-gray-200">
         <div className="max-w-3xl mx-auto flex items-center gap-3">
-          {/* Text input */}
-          <form onSubmit={handleSubmit} className="flex-1 flex items-center">
+          <form onSubmit={handleSubmit} className="flex-1">
             <input
               ref={inputRef}
               type="text"
@@ -296,17 +418,11 @@ function GiftAIApp({
               onChange={(e) => setTextInput(e.target.value)}
               onFocus={handleInputFocus}
               onBlur={handleInputBlur}
-              placeholder={
-                voice.voiceConnected
-                  ? 'Type a message (voice paused while typing)...'
-                  : 'Ask me about gifts...'
-              }
-              className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 transition-all"
+              placeholder="What are you looking for?"
+              className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-200 transition-all"
               disabled={voice.isTextLoading}
             />
           </form>
-
-          {/* Voice controls */}
           <VoiceControls
             voiceState={voice.voiceState}
             micEnabled={voice.micEnabled}
@@ -319,12 +435,29 @@ function GiftAIApp({
         </div>
       </div>
 
-      {/* ── Panels ────────────────────────────── */}
-      <CartPanel
-        isOpen={cartOpen}
-        onClose={() => setCartOpen(false)}
+      {/* ── Panels & Modals ───────────────────── */}
+      <ProductDetailPanel
+        product={detailProduct}
+        isOpen={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        onAddToCart={(product, variant, qty) => {
+          handleAddToCart(product, variant)
+          setDetailOpen(false)
+        }}
+        onBuyNow={(product, variant, qty) => {
+          handleBuyNow(product, variant)
+          setDetailOpen(false)
+        }}
+      />
+
+      <CheckoutModal
+        isOpen={checkoutOpen}
+        onClose={() => setCheckoutOpen(false)}
+        checkoutUrl={voice.cartState?.checkoutUrl}
+        storeName={storeCredentials.storeUrl.replace('.myshopify.com', '')}
         cartState={voice.cartState}
       />
+
       <StoreSwapModal
         isOpen={storeSwapOpen}
         onClose={() => setStoreSwapOpen(false)}
@@ -339,7 +472,90 @@ function GiftAIApp({
 }
 
 // ═══════════════════════════════════════════
-// Connect Screen (shown when no credentials)
+// Inline Product Carousel (within chat flow)
+// ═══════════════════════════════════════════
+
+function ProductCarouselInline({
+  products,
+  onProductClick,
+  onAddToCart,
+  onBuyNow,
+  highlightedProductId,
+}: {
+  products: ProductDetail[]
+  onProductClick?: (p: ProductDetail) => void
+  onAddToCart?: (p: ProductDetail, v?: VariantDetail) => void
+  onBuyNow?: (p: ProductDetail, v?: VariantDetail) => void
+  highlightedProductId?: number | null
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+
+  const checkScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    setCanScrollLeft(el.scrollLeft > 10)
+    setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 10)
+  }
+
+  useEffect(() => {
+    checkScroll()
+    const el = scrollRef.current
+    if (el) el.addEventListener('scroll', checkScroll, { passive: true })
+    return () => { el?.removeEventListener('scroll', checkScroll) }
+  }, [products])
+
+  const scroll = (dir: 'left' | 'right') => {
+    scrollRef.current?.scrollBy({
+      left: dir === 'left' ? -260 : 260,
+      behavior: 'smooth',
+    })
+  }
+
+  return (
+    <div className="relative">
+      <div
+        ref={scrollRef}
+        className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide"
+        style={{ scrollbarWidth: 'none' }}
+      >
+        {products.map((p, i) => (
+          <ChatProductCard
+            key={p.productId}
+            product={p}
+            staggerIndex={i}
+            onProductClick={onProductClick}
+            onAddToCart={onAddToCart}
+            onBuyNow={onBuyNow}
+            isHighlighted={p.productId === highlightedProductId}
+          />
+        ))}
+      </div>
+
+      {/* Scroll arrows */}
+      {canScrollLeft && (
+        <button
+          onClick={() => scroll('left')}
+          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 w-8 h-8 bg-white shadow-md rounded-full flex items-center justify-center hover:bg-gray-50 transition-colors z-10 border border-gray-200"
+        >
+          <ChevronLeft size={16} className="text-gray-600" />
+        </button>
+      )}
+      {canScrollRight && (
+        <button
+          onClick={() => scroll('right')}
+          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 w-8 h-8 bg-white shadow-md rounded-full flex items-center justify-center hover:bg-gray-50 transition-colors z-10 border border-gray-200"
+        >
+          <ChevronRight size={16} className="text-gray-600" />
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════
+// Connect Screen
 // ═══════════════════════════════════════════
 
 function ConnectScreen({
@@ -369,43 +585,41 @@ function ConnectScreen({
   }
 
   return (
-    <div className="h-dvh flex items-center justify-center bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950">
+    <div className="h-dvh flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-md p-8">
         <div className="text-center mb-8">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 flex items-center justify-center">
+          <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-purple-200/50">
             <span className="text-3xl">🎁</span>
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-300 to-fuchsia-300 bg-clip-text text-transparent">
-            GiftAI
-          </h1>
-          <p className="text-gray-400 mt-2">Voice-First Gift Shopping</p>
+          <h1 className="text-3xl font-bold text-gray-900">GiftAI</h1>
+          <p className="text-gray-500 mt-2">Voice-First Gift Shopping</p>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-4 bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Store URL</label>
+            <label className="block text-sm text-gray-600 mb-1">Store URL</label>
             <input
               type="text"
               value={storeUrl}
               onChange={(e) => setStoreUrl(e.target.value)}
               placeholder="your-store.myshopify.com"
-              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50"
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-400"
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-400 mb-1">Access Token</label>
+            <label className="block text-sm text-gray-600 mb-1">Access Token</label>
             <input
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="shpat_..."
-              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50"
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-400"
             />
           </div>
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && <p className="text-red-500 text-sm">{error}</p>}
           <button
             onClick={handleConnect}
-            className="w-full py-3 bg-gradient-to-r from-purple-600 to-fuchsia-600 hover:from-purple-500 hover:to-fuchsia-500 rounded-xl font-medium transition-all"
+            className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors"
           >
             Connect Store
           </button>
@@ -414,6 +628,3 @@ function ConnectScreen({
     </div>
   )
 }
-
-// Need useMemo import
-import { useMemo } from 'react'

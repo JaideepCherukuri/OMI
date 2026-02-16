@@ -107,7 +107,11 @@ export interface CartLineItem {
   quantity: number
   price: string
   currency: string
+  imageUrl?: string
 }
+
+// Convenience alias
+export type CartLine = CartLineItem
 
 export interface CartState {
   cartId: string
