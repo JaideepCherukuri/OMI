@@ -1,28 +1,14 @@
 'use client'
 
 /**
- * VoiceProvider — Core LiveKit wrapper providing unified voice + text state.
+ * VoiceProvider — Unified voice + text state provider.
  *
- * Architecture (per PRD):
- *   "ONE conversation context, TWO input modalities."
+ * Architecture:
+ *   State lives HERE (messages, products, cart) — NOT inside LiveKitRoom.
+ *   This means state persists across voice connect/disconnect cycles.
  *
- * This component:
- *   1. Manages LiveKit room connection (token fetch, connect/disconnect)
- *   2. Provides voice agent state via useVoiceAssistant (listening/speaking/thinking)
- *   3. Handles data channel events from the Python agent:
- *      - products_found → updates products[], stageContent
- *      - cart_updated → updates cartState, stageContent
- *      - checkout_ready → opens checkout URL
- *      - product_detail → shows single product detail
- *   4. Maintains unified messages[] for both voice and text
- *   5. Routes text input through voice agent (data channel) when voice is active,
- *      or through /api/chat when voice is off
- *   6. Tracks stage content state (welcome/products/cart/checkout)
- *
- * Usage:
- *   <VoiceProvider storeCredentials={creds}>
- *     <YourPageLayout />
- *   </VoiceProvider>
+ *   Voice connected:  LiveKitRoom wraps children, VoiceBridge syncs LiveKit events
+ *   Voice off:        Same state, text routes through /api/chat
  */
 
 import React, {
@@ -41,7 +27,7 @@ import {
   useVoiceAssistant,
   useConnectionState,
 } from '@livekit/components-react'
-import { RoomEvent, DataPacket_Kind, Track } from 'livekit-client'
+import { RoomEvent, DataPacket_Kind, Track, ConnectionState } from 'livekit-client'
 import { useRoomContext } from '@livekit/components-react'
 import '@livekit/components-styles'
 import type {
@@ -84,10 +70,10 @@ interface VoiceContextValue {
   toggleMic: () => void
   toggleSpeaker: () => void
 
-  // Text API fallback state
+  // Text API state
   isTextLoading: boolean
 
-  // Room name (for reconnecting)
+  // Room name
   roomName: string | null
 }
 
@@ -100,7 +86,7 @@ export function useVoice(): VoiceContextValue {
 }
 
 // ═══════════════════════════════════════════
-// VoiceProvider (outer) — manages token + LiveKitRoom
+// VoiceProvider — ALL state lives here
 // ═══════════════════════════════════════════
 
 interface VoiceProviderProps {
@@ -109,19 +95,36 @@ interface VoiceProviderProps {
 }
 
 export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps) {
+  // ── LiveKit connection state ───────────────
   const [token, setToken] = useState('')
   const [serverUrl, setServerUrl] = useState('')
   const [roomName, setRoomName] = useState<string | null>(null)
   const [shouldConnect, setShouldConnect] = useState(false)
 
-  // Fetch token and establish connection
+  // ── Voice state (set by VoiceBridge when connected) ──
+  const [voiceState, setVoiceState] = useState<VoiceState>('disconnected')
+
+  // ── Shared state (persists across voice connect/disconnect) ──
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [products, setProducts] = useState<ProductDetail[]>([])
+  const [cartState, setCartState] = useState<CartState | null>(null)
+  const [stageContent, setStageContent] = useState<StageContent>('welcome')
+  const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null)
+  const [isTextLoading, setIsTextLoading] = useState(false)
+
+  // ── Audio state ────────────────────────────
+  const [micEnabled, setMicEnabled] = useState(true)
+  const [speakerEnabled, setSpeakerEnabled] = useState(true)
+
+  // ── Room ref for data channel (set by VoiceBridge) ──
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const roomRef = useRef<any>(null)
+
+  // ── Connect voice ──────────────────────────
   const connectVoice = useCallback(async () => {
     try {
-      // Reuse existing room if reconnecting, else new session
-      const url = roomName
-        ? `/api/token?room=${roomName}`
-        : '/api/token'
-
+      setVoiceState('connecting')
+      const url = roomName ? `/api/token?room=${roomName}` : '/api/token'
       const resp = await fetch(url, { cache: 'no-store' })
       if (!resp.ok) throw new Error(`Token fetch failed: ${resp.statusText}`)
 
@@ -132,247 +135,23 @@ export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps
       setShouldConnect(true)
     } catch (err) {
       console.error('Voice connect failed:', err)
+      setVoiceState('disconnected')
     }
   }, [roomName])
 
+  // ── Disconnect voice ───────────────────────
   const disconnectVoice = useCallback(() => {
     setShouldConnect(false)
     setToken('')
-    setRoomName(null)
+    setVoiceState('disconnected')
+    // Don't clear roomName — allows reconnecting to same session
   }, [])
 
-  // If not connecting, render children without LiveKitRoom (text-only mode)
-  if (!shouldConnect || !token || !serverUrl) {
-    return (
-      <VoiceContext.Provider
-        value={createTextOnlyContext(
-          storeCredentials,
-          connectVoice,
-          disconnectVoice,
-          roomName,
-        )}
-      >
-        {children}
-      </VoiceContext.Provider>
-    )
-  }
-
-  // Voice mode — wrap in LiveKitRoom
-  return (
-    <LiveKitRoom
-      token={token}
-      serverUrl={serverUrl}
-      audio={true}
-      video={false}
-      connect={shouldConnect}
-      style={{ display: 'contents' }} // Don't add a wrapper div
-    >
-      <RoomAudioRenderer />
-      <StartAudio label="Click to enable audio" />
-      <VoiceInner
-        storeCredentials={storeCredentials}
-        connectVoice={connectVoice}
-        disconnectVoice={disconnectVoice}
-        roomName={roomName}
-      >
-        {children}
-      </VoiceInner>
-    </LiveKitRoom>
-  )
-}
-
-// ═══════════════════════════════════════════
-// VoiceInner — inside LiveKitRoom, has access to room context
-// ═══════════════════════════════════════════
-
-interface VoiceInnerProps {
-  storeCredentials: StoreCredentials
-  connectVoice: () => Promise<void>
-  disconnectVoice: () => void
-  roomName: string | null
-  children: React.ReactNode
-}
-
-function VoiceInner({
-  storeCredentials,
-  connectVoice,
-  disconnectVoice,
-  roomName,
-  children,
-}: VoiceInnerProps) {
-  const room = useRoomContext()
-  const { state: agentState, audioTrack } = useVoiceAssistant()
-  const connectionState = useConnectionState()
-
-  // ── Unified State ──────────────────────────
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [products, setProducts] = useState<ProductDetail[]>([])
-  const [cartState, setCartState] = useState<CartState | null>(null)
-  const [stageContent, setStageContent] = useState<StageContent>('welcome')
-  const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null)
-  const [micEnabled, setMicEnabled] = useState(true)
-  const [speakerEnabled, setSpeakerEnabled] = useState(true)
-  const [isTextLoading, setIsTextLoading] = useState(false)
-  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // ── Map agent states to our VoiceState ─────
-  const voiceState: VoiceState = useMemo(() => {
-    if (connectionState === 'disconnected') return 'disconnected'
-    if (connectionState === 'connecting' || connectionState === 'reconnecting') return 'connecting'
-    // Map LiveKit agent states
-    switch (agentState) {
-      case 'listening': return 'listening'
-      case 'thinking': return 'thinking'
-      case 'speaking': return 'speaking'
-      case 'initializing':
-      case 'connecting':
-        return 'connecting'
-      default: return 'idle'
-    }
-  }, [connectionState, agentState])
-
-  const voiceConnected = connectionState === 'connected'
-  const voiceConnecting = connectionState === 'connecting' || connectionState === 'reconnecting'
-
-  // ── Idle timeout (PRD: 2 min silence → disconnect) ──
-  useEffect(() => {
-    if (!voiceConnected) return
-
-    const resetIdle = () => {
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
-      idleTimerRef.current = setTimeout(() => {
-        console.log('Idle timeout — disconnecting voice')
-        disconnectVoice()
-      }, 2 * 60 * 1000) // 2 minutes
-    }
-
-    resetIdle()
-
-    // Reset on any state change
-    return () => {
-      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
-    }
-  }, [voiceConnected, voiceState, disconnectVoice])
-
-  // ── Data channel: receive events from Python agent ──
-  useEffect(() => {
-    if (!room) return
-
-    const handleData = (
-      payload: Uint8Array,
-      participant?: unknown,
-      kind?: DataPacket_Kind,
-    ) => {
-      try {
-        const event = JSON.parse(new TextDecoder().decode(payload))
-        const type = event.type as string
-
-        if (type === 'products_found') {
-          const prods = event.products as ProductDetail[]
-          setProducts(prods)
-          setStageContent('products')
-
-          // Add assistant message
-          const query = event.query || 'your request'
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `voice-${Date.now()}`,
-              role: 'assistant',
-              content: `Found ${prods.length} products for "${query}"`,
-              timestamp: Date.now(),
-              products: prods,
-              source: 'voice',
-            },
-          ])
-        } else if (type === 'cart_updated') {
-          const cart = event.cart as CartState
-          setCartState(cart)
-
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `cart-${Date.now()}`,
-              role: 'assistant',
-              content: `Cart updated — ${cart.totalQuantity} item${cart.totalQuantity !== 1 ? 's' : ''}, total ${cart.totalAmount} ${cart.currency}`,
-              timestamp: Date.now(),
-              cartState: cart,
-              source: 'voice',
-            },
-          ])
-        } else if (type === 'checkout_ready') {
-          const url = event.url as string
-          setStageContent('checkout')
-
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `checkout-${Date.now()}`,
-              role: 'assistant',
-              content: 'Your checkout is ready!',
-              timestamp: Date.now(),
-              checkoutUrl: url,
-              source: 'voice',
-            },
-          ])
-        } else if (type === 'product_detail') {
-          const product = event.product as ProductDetail
-          setProducts([product])
-          setStageContent('products')
-          setHighlightedProductId(product.productId)
-        }
-      } catch (err) {
-        console.error('Data channel parse error:', err)
-      }
-    }
-
-    room.on(RoomEvent.DataReceived, handleData)
-    return () => {
-      room.off(RoomEvent.DataReceived, handleData)
-    }
-  }, [room])
-
-  // ── Send text via data channel (when voice is active) or /api/chat ──
-  const sendTextMessage = useCallback(
-    async (text: string) => {
-      // Add user message to unified state
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `user-${Date.now()}`,
-          role: 'user',
-          content: text,
-          timestamp: Date.now(),
-          source: voiceConnected ? 'text' : 'text',
-        },
-      ])
-
-      if (voiceConnected && room) {
-        // Route through voice agent via data channel (unified context)
-        try {
-          const payload = new TextEncoder().encode(
-            JSON.stringify({ type: 'text_message', content: text }),
-          )
-          await room.localParticipant.publishData(payload, {
-            reliable: true,
-          })
-        } catch (err) {
-          console.error('Data channel send failed, falling back to text API:', err)
-          await sendViaTextApi(text)
-        }
-      } else {
-        // Text-only mode: use /api/chat
-        await sendViaTextApi(text)
-      }
-    },
-    [voiceConnected, room],
-  )
-
+  // ── Text message: /api/chat (works in BOTH modes) ──
   const sendViaTextApi = useCallback(
     async (text: string) => {
       setIsTextLoading(true)
       try {
-        // Build history from recent messages (last 10)
         const history = messages.slice(-10).map((m) => ({
           role: m.role,
           content: m.content,
@@ -432,42 +211,75 @@ function VoiceInner({
     [messages, storeCredentials, cartState],
   )
 
+  // ── Send text message (voice data channel or text API) ──
+  const sendTextMessage = useCallback(
+    async (text: string) => {
+      // Always add user message to state
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `user-${Date.now()}`,
+          role: 'user',
+          content: text,
+          timestamp: Date.now(),
+          source: 'text',
+        },
+      ])
+
+      // If voice is connected, try data channel first
+      if (shouldConnect && roomRef.current) {
+        try {
+          const payload = new TextEncoder().encode(
+            JSON.stringify({ type: 'text_message', content: text }),
+          )
+          await roomRef.current.localParticipant.publishData(payload, {
+            reliable: true,
+          })
+          return // Agent will respond via data channel
+        } catch (err) {
+          console.error('Data channel send failed, falling back to text API:', err)
+        }
+      }
+
+      // Fallback: text API
+      await sendViaTextApi(text)
+    },
+    [shouldConnect, sendViaTextApi],
+  )
+
   // ── UI action via data channel ──
   const sendUiAction = useCallback(
     (action: string, data?: Record<string, unknown>) => {
-      if (!voiceConnected || !room) return
+      if (!shouldConnect || !roomRef.current) return
       try {
         const payload = new TextEncoder().encode(
           JSON.stringify({ type: 'user_action', action, ...data }),
         )
-        room.localParticipant.publishData(payload, { reliable: true })
+        roomRef.current.localParticipant.publishData(payload, { reliable: true })
       } catch (err) {
         console.error('UI action send failed:', err)
       }
     },
-    [voiceConnected, room],
+    [shouldConnect],
   )
 
-  // ── Mic/Speaker toggles ──
+  // ── Toggle mic ──
   const toggleMic = useCallback(() => {
-    if (room) {
-      const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone)
+    if (roomRef.current) {
+      const pub = roomRef.current.localParticipant.getTrackPublication(Track.Source.Microphone)
       if (pub?.track) {
-        if (micEnabled) {
-          pub.mute()
-        } else {
-          pub.unmute()
-        }
+        if (micEnabled) pub.mute()
+        else pub.unmute()
       }
     }
     setMicEnabled((prev) => !prev)
-  }, [room, micEnabled])
+  }, [micEnabled])
 
+  // ── Toggle speaker ──
   const toggleSpeaker = useCallback(() => {
-    // Toggle audio output (mute/unmute remote tracks)
-    if (room) {
-      room.remoteParticipants.forEach((p) => {
-        p.audioTrackPublications.forEach((pub) => {
+    if (roomRef.current) {
+      roomRef.current.remoteParticipants.forEach((p: any) => {
+        p.audioTrackPublications.forEach((pub: any) => {
           if (pub.track) {
             pub.track.mediaStreamTrack.enabled = !speakerEnabled
           }
@@ -475,8 +287,9 @@ function VoiceInner({
       })
     }
     setSpeakerEnabled((prev) => !prev)
-  }, [room, speakerEnabled])
+  }, [speakerEnabled])
 
+  // ── Clear chat ──
   const clearChat = useCallback(() => {
     setMessages([])
     setProducts([])
@@ -485,64 +298,207 @@ function VoiceInner({
     setHighlightedProductId(null)
   }, [])
 
-  const value: VoiceContextValue = {
-    voiceState,
-    voiceConnected,
-    voiceConnecting,
-    messages,
-    products,
-    cartState,
-    stageContent,
-    highlightedProductId,
-    connectVoice,
-    disconnectVoice,
-    sendTextMessage,
-    sendUiAction,
-    clearChat,
-    setStageContent,
-    micEnabled,
-    speakerEnabled,
-    toggleMic,
-    toggleSpeaker,
-    isTextLoading,
-    roomName,
+  // ── Data channel handler (called from VoiceBridge) ──
+  const handleAgentData = useCallback((payload: Uint8Array) => {
+    try {
+      const event = JSON.parse(new TextDecoder().decode(payload))
+      const type = event.type as string
+
+      if (type === 'products_found') {
+        const prods = event.products as ProductDetail[]
+        setProducts(prods)
+        setStageContent('products')
+        const query = event.query || 'your request'
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `voice-${Date.now()}`,
+            role: 'assistant',
+            content: `Found ${prods.length} products for "${query}"`,
+            timestamp: Date.now(),
+            products: prods,
+            source: 'voice',
+          },
+        ])
+      } else if (type === 'cart_updated') {
+        const cart = event.cart as CartState
+        setCartState(cart)
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `cart-${Date.now()}`,
+            role: 'assistant',
+            content: `Cart updated — ${cart.totalQuantity} item${cart.totalQuantity !== 1 ? 's' : ''}, total ${cart.totalAmount} ${cart.currency}`,
+            timestamp: Date.now(),
+            cartState: cart,
+            source: 'voice',
+          },
+        ])
+      } else if (type === 'checkout_ready') {
+        const url = event.url as string
+        setStageContent('checkout')
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `checkout-${Date.now()}`,
+            role: 'assistant',
+            content: 'Your checkout is ready!',
+            timestamp: Date.now(),
+            checkoutUrl: url,
+            source: 'voice',
+          },
+        ])
+      } else if (type === 'product_detail') {
+        const product = event.product as ProductDetail
+        setProducts([product])
+        setStageContent('products')
+        setHighlightedProductId(product.productId)
+      }
+    } catch (err) {
+      console.error('Data channel parse error:', err)
+    }
+  }, [])
+
+  // ── Build context value ────────────────────
+  const voiceConnected = shouldConnect && voiceState !== 'disconnected' && voiceState !== 'connecting'
+  const voiceConnecting = voiceState === 'connecting'
+
+  const value: VoiceContextValue = useMemo(
+    () => ({
+      voiceState,
+      voiceConnected,
+      voiceConnecting,
+      messages,
+      products,
+      cartState,
+      stageContent,
+      highlightedProductId,
+      connectVoice,
+      disconnectVoice,
+      sendTextMessage,
+      sendUiAction,
+      clearChat,
+      setStageContent,
+      micEnabled,
+      speakerEnabled,
+      toggleMic,
+      toggleSpeaker,
+      isTextLoading,
+      roomName,
+    }),
+    [
+      voiceState, voiceConnected, voiceConnecting,
+      messages, products, cartState, stageContent, highlightedProductId,
+      connectVoice, disconnectVoice, sendTextMessage, sendUiAction,
+      clearChat, setStageContent,
+      micEnabled, speakerEnabled, toggleMic, toggleSpeaker,
+      isTextLoading, roomName,
+    ],
+  )
+
+  // ── Render ─────────────────────────────────
+  if (!shouldConnect || !token || !serverUrl) {
+    // Text-only mode — same context, same state, just no LiveKit
+    return (
+      <VoiceContext.Provider value={value}>
+        {children}
+      </VoiceContext.Provider>
+    )
   }
 
-  return <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>
+  // Voice mode — wrap in LiveKitRoom + bridge
+  return (
+    <VoiceContext.Provider value={value}>
+      <LiveKitRoom
+        token={token}
+        serverUrl={serverUrl}
+        audio={true}
+        video={false}
+        connect={shouldConnect}
+        style={{ display: 'contents' }}
+      >
+        <RoomAudioRenderer />
+        <StartAudio label="Click to enable audio" />
+        <VoiceBridge
+          roomRef={roomRef}
+          setVoiceState={setVoiceState}
+          onAgentData={handleAgentData}
+        />
+        {children}
+      </LiveKitRoom>
+    </VoiceContext.Provider>
+  )
 }
 
 // ═══════════════════════════════════════════
-// Text-only fallback context (when voice is disconnected)
+// VoiceBridge — syncs LiveKit state to parent
+// No children — just hooks + effects
 // ═══════════════════════════════════════════
 
-function createTextOnlyContext(
-  storeCredentials: StoreCredentials,
-  connectVoice: () => Promise<void>,
-  disconnectVoice: () => void,
-  roomName: string | null,
-): VoiceContextValue {
-  // This creates a minimal context for text-only mode
-  // The actual state management happens in a separate hook
-  return {
-    voiceState: 'disconnected',
-    voiceConnected: false,
-    voiceConnecting: false,
-    messages: [],
-    products: [],
-    cartState: null,
-    stageContent: 'welcome',
-    highlightedProductId: null,
-    connectVoice,
-    disconnectVoice,
-    sendTextMessage: async () => {},
-    sendUiAction: () => {},
-    clearChat: () => {},
-    setStageContent: () => {},
-    micEnabled: true,
-    speakerEnabled: true,
-    toggleMic: () => {},
-    toggleSpeaker: () => {},
-    isTextLoading: false,
-    roomName,
-  }
+function VoiceBridge({
+  roomRef,
+  setVoiceState,
+  onAgentData,
+}: {
+  roomRef: React.MutableRefObject<any>
+  setVoiceState: (state: VoiceState) => void
+  onAgentData: (payload: Uint8Array) => void
+}) {
+  const room = useRoomContext()
+  const { state: agentState } = useVoiceAssistant()
+  const connectionState = useConnectionState()
+
+  // ── Sync room ref to parent ──
+  useEffect(() => {
+    roomRef.current = room
+    return () => {
+      roomRef.current = null
+    }
+  }, [room, roomRef])
+
+  // ── Sync voice state to parent ──
+  useEffect(() => {
+    if (connectionState === ConnectionState.Disconnected) {
+      setVoiceState('disconnected')
+      return
+    }
+    if (connectionState === ConnectionState.Connecting || connectionState === ConnectionState.Reconnecting) {
+      setVoiceState('connecting')
+      return
+    }
+    // Connected — map agent state
+    switch (agentState) {
+      case 'listening':
+        setVoiceState('listening')
+        break
+      case 'thinking':
+        setVoiceState('thinking')
+        break
+      case 'speaking':
+        setVoiceState('speaking')
+        break
+      default:
+        setVoiceState('idle')
+    }
+  }, [connectionState, agentState, setVoiceState])
+
+  // ── Listen for data channel events ──
+  useEffect(() => {
+    if (!room) return
+
+    const handleData = (
+      payload: Uint8Array,
+      _participant?: unknown,
+      _kind?: DataPacket_Kind,
+    ) => {
+      onAgentData(payload)
+    }
+
+    room.on(RoomEvent.DataReceived, handleData)
+    return () => {
+      room.off(RoomEvent.DataReceived, handleData)
+    }
+  }, [room, onAgentData])
+
+  return null // Bridge renders nothing
 }

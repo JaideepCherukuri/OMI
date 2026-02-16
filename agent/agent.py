@@ -96,7 +96,7 @@ async def entrypoint(ctx: JobContext):
 
     # Configure Gemini Realtime model
     model = google.realtime.RealtimeModel(
-        model="gemini-2.5-flash-native-audio-preview",
+        model="gemini-2.5-flash-native-audio-preview-12-2025",
         voice="Puck",
         temperature=0.7,
     )
