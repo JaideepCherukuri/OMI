@@ -48,4 +48,11 @@
 
 /* Product card hover */
 .product-card { transition: all 0.3s ease; }
-.product-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(124,58,237,0.1); }
+.product-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(124,58,237,0.15); }
+
+/* Stagger animation for product cards (PRD Round 4) */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-fadeInUp { animation: fadeInUp 0.4s ease-out; }

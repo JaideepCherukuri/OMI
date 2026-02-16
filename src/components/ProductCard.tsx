@@ -8,11 +8,12 @@ import clsx from 'clsx'
 interface ProductCardProps {
   product: ProductDetail
   onAddToCart?: (product: ProductDetail, variant?: VariantDetail) => void
+  onProductClick?: (product: ProductDetail) => void
   isHighlighted?: boolean
   compact?: boolean
 }
 
-export default function ProductCard({ product, onAddToCart, isHighlighted, compact }: ProductCardProps) {
+export default function ProductCard({ product, onAddToCart, onProductClick, isHighlighted, compact }: ProductCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [selectedVariant, setSelectedVariant] = useState<VariantDetail | null>(null)
 
@@ -28,9 +29,12 @@ export default function ProductCard({ product, onAddToCart, isHighlighted, compa
         isHighlighted ? 'border-purple-400 ring-2 ring-purple-200' : 'border-gray-100'
       )}
     >
-      {/* Image */}
+      {/* Image (clickable for details) */}
       {image && (
-        <div className="relative h-40 bg-gray-50">
+        <div
+          className="relative h-40 bg-gray-50 cursor-pointer"
+          onClick={() => onProductClick?.(product)}
+        >
           <img
             src={image}
             alt={product.title}
@@ -45,8 +49,11 @@ export default function ProductCard({ product, onAddToCart, isHighlighted, compa
       )}
 
       <div className="p-3">
-        {/* Title & Price */}
-        <h3 className="font-semibold text-sm text-gray-900 line-clamp-2">{product.title}</h3>
+        {/* Title & Price (clickable) */}
+        <h3
+          className="font-semibold text-sm text-gray-900 line-clamp-2 cursor-pointer hover:text-purple-700 transition-colors"
+          onClick={() => onProductClick?.(product)}
+        >{product.title}</h3>
         <p className="text-purple-700 font-bold text-sm mt-1">{product.priceRange}</p>
 
         {/* Meta badges */}
