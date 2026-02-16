@@ -154,6 +154,7 @@ export interface ChatResponse {
   products?: ProductDetail[]
   checkoutUrl?: string
   cartState?: CartState
+  mcpSessionId?: string
 }
 
 // === Voice Types ===

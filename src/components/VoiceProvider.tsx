@@ -112,6 +112,11 @@ export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null)
   const [isTextLoading, setIsTextLoading] = useState(false)
 
+  // ── MCP session ID (persists across requests for cart continuity) ──
+  const [mcpSessionId, setMcpSessionId] = useState<string>(
+    () => `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+  )
+
   // ── Audio state ────────────────────────────
   const [micEnabled, setMicEnabled] = useState(true)
   const [speakerEnabled, setSpeakerEnabled] = useState(true)
@@ -167,6 +172,7 @@ export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps
             history,
             cartId: cartState?.cartId,
             cartState: cartState,
+            mcpSessionId,
           }),
         })
 
@@ -179,6 +185,9 @@ export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps
         }
         if (data.cartState) {
           setCartState(data.cartState)
+        }
+        if (data.mcpSessionId) {
+          setMcpSessionId(data.mcpSessionId)
         }
 
         setMessages((prev) => [

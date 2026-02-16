@@ -1,11 +1,11 @@
 /**
  * Gemini chat orchestration with Shopify tool execution.
- * Handles: MCP search + Admin API fallback, Storefront cart, response cleaning.
+ * Handles: MCP search + Admin API fallback, MCP cart, response cleaning.
  */
 
-import { ShopifyClient, shopifyProductToDetail } from './shopify-client'
+import { ShopifyClient } from './shopify-client'
 import { ShopifyMCPClient } from './mcp-client'
-import { StorefrontClient } from './storefront-client'
+import type { MCPProduct } from './mcp-client'
 import { getToolsForMode } from './tools'
 import type {
   StoreCredentials,
@@ -162,7 +162,7 @@ function extractNumericVariantId(id: string): string {
   return match ? match[1] : id
 }
 
-// Build multi-item Shopify checkout URL from cart lines
+// Build multi-item Shopify checkout URL from cart lines (fallback only)
 function buildCheckoutUrl(storeUrl: string, lines: CartLineItem[]): string {
   const host = storeUrl.replace(/^https?:\/\//, '')
   const cartParts = lines.map(l =>
@@ -171,16 +171,47 @@ function buildCheckoutUrl(storeUrl: string, lines: CartLineItem[]): string {
   return `https://${host}/cart/${cartParts}`
 }
 
+// Convert MCP product response to our ProductDetail type
+function mcpProductToDetail(mp: MCPProduct): ProductDetail {
+  return {
+    productId: parseInt(mp.product_id?.split('/')?.pop() || '0'),
+    title: mp.title || '',
+    descriptionHtml: mp.description || '',
+    vendor: mp.vendor || '',
+    productType: mp.product_type || '',
+    tags: mp.tags || [],
+    status: 'active',
+    handle: '',
+    images: mp.image_url ? [mp.image_url] : [],
+    variants: (mp.variants || []).map(v => ({
+      variantId: parseInt(v.variant_id?.split('/')?.pop() || '0'),
+      gid: v.variant_id || '',
+      name: v.title || 'Default',
+      sku: '',
+      price: parseFloat(v.price || '0'),
+      compareAtPrice: null,
+      inventoryQuantity: v.available ? 10 : 0,
+      deliveryTime: null,
+      availableRegions: null,
+    })),
+    priceRange: mp.price_range
+      ? `$${parseFloat(mp.price_range.min).toFixed(2)}–$${parseFloat(mp.price_range.max).toFixed(2)}`
+      : 'Price varies',
+    totalStock: (mp.variants || []).filter(v => v.available).length * 10,
+    hasDiscount: false,
+  }
+}
+
 export async function chat(
   message: string,
   credentials: StoreCredentials,
   history: HistoryEntry[] = [],
   cartId?: string,
-  clientCartState?: CartState
+  clientCartState?: CartState,
+  mcpSessionId?: string
 ): Promise<ChatResponse> {
   const shopifyClient = new ShopifyClient(credentials)
-  const mcpClient = new ShopifyMCPClient(credentials.storeUrl)
-  const storefrontClient = new StorefrontClient(credentials)
+  const mcpClient = new ShopifyMCPClient(credentials.storeUrl, mcpSessionId)
   const tools = getToolsForMode('user')
 
   let currentCartId = cartId || ''
@@ -271,42 +302,11 @@ export async function chat(
           const occasion = fnArgs.occasion as string | undefined
           const searchQuery = occasion ? `${query} ${occasion}` : query
 
-          // 1. Try MCP first
+          // 1. Try MCP first (with required context param)
           let mcpProducts: ProductDetail[] = []
           try {
-            const mcpResults = await mcpClient.searchProducts(searchQuery)
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            mcpProducts = mcpResults.map((mp: any) => ({
-              productId: parseInt(mp.id?.split('/')?.pop() || '0'),
-              title: mp.title || '',
-              descriptionHtml: mp.descriptionHtml || mp.description || '',
-              vendor: mp.vendor || '',
-              productType: mp.productType || '',
-              tags: mp.tags || [],
-              status: 'active',
-              handle: mp.handle || '',
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              images: (mp.images || []).map((img: any) => img.url || img),
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              variants: (mp.variants || []).map((v: any) => ({
-                variantId: parseInt(v.id?.split('/')?.pop() || '0'),
-                gid: v.id || '',
-                name: v.title || 'Default',
-                sku: v.sku || '',
-                price: parseFloat(v.price?.amount || '0'),
-                compareAtPrice: v.compareAtPrice ? parseFloat(v.compareAtPrice.amount) : null,
-                inventoryQuantity: v.quantityAvailable || 0,
-                deliveryTime: null,
-                availableRegions: null,
-              })),
-              priceRange: mp.priceRange
-                ? `$${parseFloat(mp.priceRange.minVariantPrice.amount).toFixed(2)}–$${parseFloat(mp.priceRange.maxVariantPrice.amount).toFixed(2)}`
-                : 'Price varies',
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              totalStock: (mp.variants || []).reduce((s: number, v: any) => s + (v.quantityAvailable || 0), 0),
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              hasDiscount: (mp.variants || []).some((v: any) => v.compareAtPrice && parseFloat(v.compareAtPrice.amount) > parseFloat(v.price?.amount || '0')),
-            }))
+            const mcpResults = await mcpClient.searchProducts(searchQuery, `User searching for: ${searchQuery}`)
+            mcpProducts = mcpResults.map((mp: MCPProduct) => mcpProductToDetail(mp))
           } catch {
             // MCP failed, will fall back to Admin API
           }
@@ -431,23 +431,21 @@ export async function chat(
 
           const variantGid = variant.gid || `gid://shopify/ProductVariant/${variant.variantId}`
 
-          // Try Storefront API only if we have a real cart ID (not 'direct')
+          // 1. Try MCP cart (server-side, real Shopify checkout URLs)
           let cart: CartState | null = null
-          if (currentCartId && currentCartId !== 'direct') {
-            cart = await storefrontClient.cartLinesAdd(currentCartId, variantGid)
-          } else if (!currentCartId) {
-            cart = await storefrontClient.cartCreate(variantGid)
+          try {
+            const mcpCartId = (currentCartId && currentCartId !== 'direct') ? currentCartId : undefined
+            cart = await mcpClient.addToCart(
+              [{ variantId: variantGid, quantity: 1 }],
+              mcpCartId
+            )
+          } catch {
+            // MCP cart failed, will fall back to client-side
           }
 
           if (cart) {
             currentCartId = cart.cartId
             cartState = cart
-
-            // Generate proper multi-item checkout URL if missing
-            if (!cart.checkoutUrl) {
-              cart.checkoutUrl = buildCheckoutUrl(credentials.storeUrl, cart.lines)
-              cartState = cart
-            }
 
             toolResult = {
               message: `Added ${product.title} (${variant.name}) to cart!`,
@@ -457,7 +455,7 @@ export async function chat(
               itemCount: cart.totalQuantity,
             }
           } else {
-            // Client-side cart: merge with existing cartState
+            // 2. Fallback: client-side cart with multi-item checkout URL
             const newLine: CartLineItem = {
               lineId: String(Date.now()),
               variantId: String(variant.variantId),
@@ -465,7 +463,7 @@ export async function chat(
               variantTitle: variant.name,
               quantity: 1,
               price: String(variant.price),
-              currency: 'INR',
+              currency: 'USD',
             }
 
             const existingLines = cartState?.lines || []
@@ -475,12 +473,10 @@ export async function chat(
 
             let updatedLines: CartLineItem[]
             if (existingIdx >= 0) {
-              // Increment quantity for existing variant
               updatedLines = existingLines.map((l, i) =>
                 i === existingIdx ? { ...l, quantity: l.quantity + 1 } : l
               )
             } else {
-              // Add new line
               updatedLines = [...existingLines, newLine]
             }
 
@@ -496,7 +492,7 @@ export async function chat(
               checkoutUrl,
               lines: updatedLines,
               totalAmount: String(totalAmount),
-              currency: 'INR',
+              currency: 'USD',
               totalQuantity: totalQty,
             }
 
@@ -512,8 +508,14 @@ export async function chat(
         }
 
         case 'view_cart': {
+          // 1. Try MCP get_cart for real cart IDs
           if (currentCartId && currentCartId !== 'direct') {
-            const cart = await storefrontClient.getCart(currentCartId)
+            let cart: CartState | null = null
+            try {
+              cart = await mcpClient.getCartById(currentCartId)
+            } catch {
+              // MCP get_cart failed
+            }
             if (cart) {
               cartState = cart
               toolResult = {
@@ -643,5 +645,6 @@ export async function chat(
     products: foundProducts.length > 0 ? foundProducts : undefined,
     cartState,
     checkoutUrl: cartState?.checkoutUrl,
+    mcpSessionId: mcpClient.getSessionId(),
   }
 }
