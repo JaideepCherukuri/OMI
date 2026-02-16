@@ -92,8 +92,8 @@ export default function ChatProductCard({
           </span>
         )}
 
-        {/* Dual action buttons — appear on hover / always on mobile */}
-        <div className="absolute bottom-2 left-2 right-2 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 md:opacity-0 max-md:opacity-100">
+        {/* Dual action buttons — always visible on all screen sizes */}
+        <div className="absolute bottom-2 left-2 right-2 flex gap-1.5 opacity-100">
           <button
             onClick={(e) => {
               e.stopPropagation()

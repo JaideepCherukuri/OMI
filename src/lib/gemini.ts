@@ -12,6 +12,7 @@ import type {
   ProductDetail,
   ChatResponse,
   CartState,
+  CartLineItem,
   HistoryEntry,
 } from '@/types'
 
@@ -155,11 +156,27 @@ interface GeminiMessage {
   parts: Array<{ text?: string; functionCall?: { name: string; args: Record<string, unknown> }; functionResponse?: { name: string; response: Record<string, unknown> } }>
 }
 
+// Helper: extract numeric variant ID from GID or string
+function extractNumericVariantId(id: string): string {
+  const match = id.match(/(\d+)$/)
+  return match ? match[1] : id
+}
+
+// Build multi-item Shopify checkout URL from cart lines
+function buildCheckoutUrl(storeUrl: string, lines: CartLineItem[]): string {
+  const host = storeUrl.replace(/^https?:\/\//, '')
+  const cartParts = lines.map(l =>
+    `${extractNumericVariantId(l.variantId)}:${l.quantity}`
+  ).join(',')
+  return `https://${host}/cart/${cartParts}`
+}
+
 export async function chat(
   message: string,
   credentials: StoreCredentials,
   history: HistoryEntry[] = [],
-  cartId?: string
+  cartId?: string,
+  clientCartState?: CartState
 ): Promise<ChatResponse> {
   const shopifyClient = new ShopifyClient(credentials)
   const mcpClient = new ShopifyMCPClient(credentials.storeUrl)
@@ -167,7 +184,7 @@ export async function chat(
   const tools = getToolsForMode('user')
 
   let currentCartId = cartId || ''
-  let cartState: CartState | undefined
+  let cartState: CartState | undefined = clientCartState || undefined
   let foundProducts: ProductDetail[] = []
 
   // Build Gemini messages
@@ -414,11 +431,11 @@ export async function chat(
 
           const variantGid = variant.gid || `gid://shopify/ProductVariant/${variant.variantId}`
 
-          // Create or add to cart via Storefront API
+          // Try Storefront API only if we have a real cart ID (not 'direct')
           let cart: CartState | null = null
-          if (currentCartId) {
+          if (currentCartId && currentCartId !== 'direct') {
             cart = await storefrontClient.cartLinesAdd(currentCartId, variantGid)
-          } else {
+          } else if (!currentCartId) {
             cart = await storefrontClient.cartCreate(variantGid)
           }
 
@@ -426,11 +443,9 @@ export async function chat(
             currentCartId = cart.cartId
             cartState = cart
 
-            // Generate fallback checkout URL if missing
+            // Generate proper multi-item checkout URL if missing
             if (!cart.checkoutUrl) {
-              const storeUrl = credentials.storeUrl.replace(/^https?:\/\//, '')
-              const encoded = btoa(`${variant.variantId}:1`)
-              cart.checkoutUrl = `https://${storeUrl}/cart/c/${encoded}`
+              cart.checkoutUrl = buildCheckoutUrl(credentials.storeUrl, cart.lines)
               cartState = cart
             }
 
@@ -442,30 +457,55 @@ export async function chat(
               itemCount: cart.totalQuantity,
             }
           } else {
-            // Fallback: generate direct checkout URL
-            const storeUrl = credentials.storeUrl.replace(/^https?:\/\//, '')
-            const encoded = btoa(`${variant.variantId}:1`)
-            const checkoutUrl = `https://${storeUrl}/cart/c/${encoded}`
+            // Client-side cart: merge with existing cartState
+            const newLine: CartLineItem = {
+              lineId: String(Date.now()),
+              variantId: String(variant.variantId),
+              productTitle: product.title,
+              variantTitle: variant.name,
+              quantity: 1,
+              price: String(variant.price),
+              currency: 'INR',
+            }
+
+            const existingLines = cartState?.lines || []
+            const existingIdx = existingLines.findIndex(
+              l => extractNumericVariantId(l.variantId) === String(variant.variantId)
+            )
+
+            let updatedLines: CartLineItem[]
+            if (existingIdx >= 0) {
+              // Increment quantity for existing variant
+              updatedLines = existingLines.map((l, i) =>
+                i === existingIdx ? { ...l, quantity: l.quantity + 1 } : l
+              )
+            } else {
+              // Add new line
+              updatedLines = [...existingLines, newLine]
+            }
+
+            const totalQty = updatedLines.reduce((sum, l) => sum + l.quantity, 0)
+            const totalAmount = updatedLines.reduce(
+              (sum, l) => sum + parseFloat(l.price) * l.quantity, 0
+            )
+            const checkoutUrl = buildCheckoutUrl(credentials.storeUrl, updatedLines)
+
+            currentCartId = 'direct'
             cartState = {
               cartId: 'direct',
               checkoutUrl,
-              lines: [{
-                lineId: '1',
-                variantId: String(variant.variantId),
-                productTitle: product.title,
-                variantTitle: variant.name,
-                quantity: 1,
-                price: String(variant.price),
-                currency: 'INR',
-              }],
-              totalAmount: String(variant.price),
+              lines: updatedLines,
+              totalAmount: String(totalAmount),
               currency: 'INR',
-              totalQuantity: 1,
+              totalQuantity: totalQty,
             }
+
             toolResult = {
               message: `Added ${product.title} (${variant.name}) to cart!`,
-              total: String(variant.price),
+              total: String(totalAmount),
+              currency: cartState.currency,
               checkoutUrl,
+              itemCount: totalQty,
             }
           }
           break

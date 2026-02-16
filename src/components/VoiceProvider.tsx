@@ -166,6 +166,7 @@ export function VoiceProvider({ storeCredentials, children }: VoiceProviderProps
             storeCredentials,
             history,
             cartId: cartState?.cartId,
+            cartState: cartState,
           }),
         })
 
