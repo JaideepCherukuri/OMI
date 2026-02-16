@@ -50,6 +50,33 @@ const SYNONYMS: Record<string, string[]> = {
   friend: ['friendship', 'bestie'],
 }
 
+/** Fuzzy product match: checks if most words in the query appear in the product title */
+function findProductFuzzy(products: ProductDetail[], query: string): ProductDetail | undefined {
+  const words = query.toLowerCase().match(/\w{3,}/g) || [] // words 3+ chars
+  if (words.length === 0) return undefined
+
+  let bestProduct: ProductDetail | undefined
+  let bestScore = 0
+
+  for (const p of products) {
+    const titleLower = p.title.toLowerCase()
+    // Exact substring match (highest priority)
+    if (titleLower.includes(query.toLowerCase()) || query.toLowerCase().includes(titleLower)) {
+      return p
+    }
+    // Word-overlap score
+    const matchedWords = words.filter(w => titleLower.includes(w))
+    const score = matchedWords.length / words.length
+    if (score > bestScore) {
+      bestScore = score
+      bestProduct = p
+    }
+  }
+
+  // Need at least 50% word overlap
+  return bestScore >= 0.5 ? bestProduct : undefined
+}
+
 function expandQuery(query: string): string[] {
   const words = query.toLowerCase().match(/\w+/g) || []
   const expanded = new Set(words)
@@ -364,18 +391,12 @@ export async function chat(
 
         case 'get_product_details': {
           const title = (fnArgs.product_title as string) || ''
-          // Search in found products first, then all products
-          let product = foundProducts.find(p =>
-            p.title.toLowerCase().includes(title.toLowerCase()) ||
-            title.toLowerCase().includes(p.title.toLowerCase())
-          )
+          // Search in found products first (fuzzy match), then all products
+          let product = findProductFuzzy(foundProducts, title)
 
           if (!product) {
             const allProducts = await shopifyClient.getProductsFormatted()
-            product = allProducts.find(p =>
-              p.title.toLowerCase().includes(title.toLowerCase()) ||
-              title.toLowerCase().includes(p.title.toLowerCase())
-            )
+            product = findProductFuzzy(allProducts, title)
           }
 
           if (product) {
@@ -401,18 +422,12 @@ export async function chat(
           const productTitle = (fnArgs.product_title as string) || ''
           const variantName = (fnArgs.variant_name as string) || ''
 
-          // Find product
-          let product = foundProducts.find(p =>
-            p.title.toLowerCase().includes(productTitle.toLowerCase()) ||
-            productTitle.toLowerCase().includes(p.title.toLowerCase())
-          )
+          // Find product (fuzzy match for natural language like "tea collection")
+          let product = findProductFuzzy(foundProducts, productTitle)
 
           if (!product) {
             const allProducts = await shopifyClient.getProductsFormatted()
-            product = allProducts.find(p =>
-              p.title.toLowerCase().includes(productTitle.toLowerCase()) ||
-              productTitle.toLowerCase().includes(p.title.toLowerCase())
-            )
+            product = findProductFuzzy(allProducts, productTitle)
           }
 
           if (!product || product.variants.length === 0) {
