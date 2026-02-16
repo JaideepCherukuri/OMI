@@ -50,6 +50,8 @@ export default function Home() {
   })
   const [isConnected, setIsConnected] = useState(false)
 
+  const [searchMode, setSearchMode] = useState<SearchMode>('storefront')
+
   useEffect(() => {
     if (storeCredentials.accessToken) {
       setIsConnected(true)
@@ -66,8 +68,6 @@ export default function Home() {
       />
     )
   }
-
-  const [searchMode, setSearchMode] = useState<SearchMode>('storefront')
 
   return (
     <VoiceProvider storeCredentials={storeCredentials} searchMode={searchMode}>
