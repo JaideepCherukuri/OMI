@@ -126,7 +126,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const roomRef = useRef<any>(null)
 
-  // ── Connect voice ──────────────────────────
+  // ── Connect voice (sends conversation context for continuity) ──
   const connectVoice = useCallback(async () => {
     try {
       setVoiceState('connecting')
@@ -139,11 +139,26 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       setServerUrl(data.serverUrl)
       setRoomName(data.roomName)
       setShouldConnect(true)
+
+      // Send conversation context to voice agent after short delay (allow connection)
+      setTimeout(() => {
+        if (roomRef.current && messages.length > 0) {
+          try {
+            const context = messages.slice(-8).map(m => `${m.role}: ${m.content}`).join('\n')
+            const payload = new TextEncoder().encode(
+              JSON.stringify({ type: 'text_message', content: `[Context from text chat — continue this conversation]\n${context}\n\nThe user has switched to voice mode. Continue helping them with the same context.` })
+            )
+            roomRef.current.localParticipant.publishData(payload, { reliable: true })
+          } catch (e) {
+            console.warn('Failed to send context to voice agent:', e)
+          }
+        }
+      }, 3000)
     } catch (err) {
       console.error('Voice connect failed:', err)
       setVoiceState('disconnected')
     }
-  }, [roomName])
+  }, [roomName, messages])
 
   // ── Disconnect voice ───────────────────────
   const disconnectVoice = useCallback(() => {
@@ -223,7 +238,10 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     [messages, storeCredentials, cartState, searchMode],
   )
 
-  // ── Send text message (voice data channel or text API) ──
+  // ── Send text message — ALWAYS uses /api/chat for immediate response ──
+  // This ensures text works seamlessly whether voice is connected or not.
+  // Voice agent runs in parallel for audio-based interactions.
+  // Both share the same `messages` state for context continuity.
   const sendTextMessage = useCallback(
     async (text: string) => {
       // Always add user message to state
@@ -238,25 +256,10 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
         },
       ])
 
-      // If voice is connected, try data channel first
-      if (shouldConnect && roomRef.current) {
-        try {
-          const payload = new TextEncoder().encode(
-            JSON.stringify({ type: 'text_message', content: text }),
-          )
-          await roomRef.current.localParticipant.publishData(payload, {
-            reliable: true,
-          })
-          return // Agent will respond via data channel
-        } catch (err) {
-          console.error('Data channel send failed, falling back to text API:', err)
-        }
-      }
-
-      // Fallback: text API
+      // Always use text API — gives immediate response with product cards
       await sendViaTextApi(text)
     },
-    [shouldConnect, sendViaTextApi],
+    [sendViaTextApi],
   )
 
   // ── UI action via data channel ──
@@ -346,7 +349,12 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       }
 
       if (type === 'products_found') {
-        const prods = event.products as ProductDetail[]
+        // Ensure voice products match text mode card format (isGlobal + directCheckoutUrl)
+        const prods = (event.products as ProductDetail[]).map(p => ({
+          ...p,
+          isGlobal: p.isGlobal ?? true,
+          directCheckoutUrl: p.directCheckoutUrl || p.onlineStoreUrl || '',
+        }))
         setProducts(prods)
         setStageContent('products')
         const query = event.query || 'your request'

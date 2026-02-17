@@ -60,7 +60,9 @@ export default function ProductDetailPanel({
 
     if (sizes.length === 0 && colors.length === 0) {
       for (const v of currentProduct.variants) {
-        if (v.name !== 'Default Title' && !sizes.includes(v.name)) {
+        // Skip generic/default variant names — only show meaningful variant options
+        const isGeneric = /^default|^Default Title$/i.test(v.name)
+        if (!isGeneric && !sizes.includes(v.name)) {
           sizes.push(v.name)
         }
       }
@@ -297,28 +299,43 @@ export default function ProductDetailPanel({
                 </button>
               </div>
 
-              <button
-                onClick={() =>
-                  selectedVariant &&
-                  onAddToCart?.(currentProduct, selectedVariant, quantity)
-                }
-                disabled={!selectedVariant || selectedVariant.inventoryQuantity <= 0}
-                className="w-full py-3 border border-[var(--border)] rounded-[var(--radius)] text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)]/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                <ShoppingCart size={16} />
-                Add to cart
-              </button>
+              {/* Global products: single "Checkout now" button opens store directly */}
+              {currentProduct.isGlobal && currentProduct.directCheckoutUrl ? (
+                <a
+                  href={currentProduct.directCheckoutUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] rounded-[var(--radius)] text-sm font-medium transition-all flex items-center justify-center gap-2"
+                >
+                  <ShoppingCart size={16} />
+                  Checkout now 🛒
+                </a>
+              ) : (
+                <>
+                  <button
+                    onClick={() =>
+                      selectedVariant &&
+                      onAddToCart?.(currentProduct, selectedVariant, quantity)
+                    }
+                    disabled={!selectedVariant || selectedVariant.inventoryQuantity <= 0}
+                    className="w-full py-3 border border-[var(--border)] rounded-[var(--radius)] text-sm font-medium text-[var(--foreground)] hover:bg-[var(--muted)]/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                  >
+                    <ShoppingCart size={16} />
+                    Add to cart
+                  </button>
 
-              <button
-                onClick={() =>
-                  selectedVariant &&
-                  onBuyNow?.(currentProduct, selectedVariant, quantity)
-                }
-                disabled={!selectedVariant || selectedVariant.inventoryQuantity <= 0}
-                className="w-full py-3 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] rounded-[var(--radius)] text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              >
-                Buy now
-              </button>
+                  <button
+                    onClick={() =>
+                      selectedVariant &&
+                      onBuyNow?.(currentProduct, selectedVariant, quantity)
+                    }
+                    disabled={!selectedVariant || selectedVariant.inventoryQuantity <= 0}
+                    className="w-full py-3 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] rounded-[var(--radius)] text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    Buy now
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

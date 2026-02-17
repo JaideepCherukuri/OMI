@@ -45,7 +45,7 @@ import { useOrbAudio } from '@/hooks/useOrbAudio'
 import { cn } from '@/lib/utils'
 import { AnimatePresence } from 'framer-motion'
 import type { StoreCredentials, ProductDetail, VariantDetail } from '@/types'
-import { ShoppingBag, ChevronLeft, ChevronRight, Mic, MicOff, MessageSquare } from 'lucide-react'
+import { ShoppingBag, ChevronLeft, ChevronRight, MicOff } from 'lucide-react'
 import Image from 'next/image'
 
 export type SearchMode = 'global' | 'storefront'
@@ -250,6 +250,11 @@ function GiftAIApp({
 
   const handleAddToCart = useCallback(
     (product: ProductDetail, variant?: VariantDetail) => {
+      // For global products with checkout URL, open directly
+      if (product.isGlobal && product.directCheckoutUrl) {
+        window.open(product.directCheckoutUrl, '_blank')
+        return
+      }
       const msg = variant && variant.name !== 'Default Title'
         ? `Add ${product.title} (${variant.name}) to my cart`
         : `Add ${product.title} to my cart`
@@ -260,6 +265,11 @@ function GiftAIApp({
 
   const handleBuyNow = useCallback(
     (product: ProductDetail, variant?: VariantDetail) => {
+      // For global products with checkout URL, open directly
+      if (product.isGlobal && product.directCheckoutUrl) {
+        window.open(product.directCheckoutUrl, '_blank')
+        return
+      }
       const msg = variant && variant.name !== 'Default Title'
         ? `I want to buy ${product.title} (${variant.name})`
         : `I want to buy ${product.title}`
@@ -367,40 +377,6 @@ function GiftAIApp({
           {/* Voice/Text toggle + Cart (only when chat is active) */}
           {isOrbMinimized && (
             <>
-              {/* Voice/Text mode toggle */}
-              <button
-                onClick={() => {
-                  if (voice.voiceConnected) {
-                    voice.disconnectVoice()
-                  } else {
-                    voice.connectVoice()
-                  }
-                }}
-                className={cn(
-                  "p-1.5 rounded-[var(--radius)] transition-colors",
-                  voice.voiceConnected
-                    ? "bg-[var(--brand)]/10 text-[var(--brand)]"
-                    : "hover:bg-black/5 dark:hover:bg-white/5 text-[var(--muted-foreground)]"
-                )}
-                title={voice.voiceConnected ? "Switch to text mode" : "Switch to voice mode"}
-              >
-                {voice.voiceConnected ? <Mic size={14} /> : <MessageSquare size={14} />}
-              </button>
-              {/* Mic mute (only when voice is connected) */}
-              {voice.voiceConnected && (
-                <button
-                  onClick={voice.toggleMic}
-                  className={cn(
-                    "p-1.5 rounded-[var(--radius)] transition-colors",
-                    voice.micEnabled
-                      ? "hover:bg-black/5 dark:hover:bg-white/5 text-[var(--foreground)]"
-                      : "bg-red-500/10 text-red-500"
-                  )}
-                  title={voice.micEnabled ? "Mute microphone" : "Unmute microphone"}
-                >
-                  {voice.micEnabled ? <Mic size={14} /> : <MicOff size={14} />}
-                </button>
-              )}
               <button
                 onClick={() => setCheckoutOpen(true)}
                 className="relative p-1.5 rounded-[var(--radius)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
@@ -517,7 +493,7 @@ function GiftAIApp({
         )}>
           {/* Scrollable chat area */}
           <div className="flex-1 min-h-0 overflow-auto">
-            <div className="max-w-4xl mx-auto px-4 py-4 space-y-1">
+            <div className="max-w-4xl mx-auto px-4 pt-14 pb-4 space-y-1">
               {chatItems.map((item) => {
                 if (item.type === 'message') {
                   return <ChatMessage key={item.key} message={item.data} />
@@ -555,15 +531,15 @@ function GiftAIApp({
             </div>
           </div>
 
-          {/* Suggestion chips — pinned above input, outside scroll */}
+          {/* Suggestion chips — single-line scrollable row above input */}
           {chatSuggestions.length > 0 && (
-            <div className="flex-shrink-0 w-full max-w-4xl mx-auto px-4 py-2 border-t border-[var(--border)]/30">
-              <div className="flex gap-2 flex-wrap">
+            <div className="flex-shrink-0 w-full max-w-4xl mx-auto px-4 py-1.5">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide">
                 {chatSuggestions.map((s) => (
                   <button
                     key={s.label}
                     onClick={() => handleSubmit(s.text)}
-                    className="px-3 py-1.5 text-[9px] font-mono uppercase tracking-[0.12em] border border-[var(--border)] rounded-[var(--radius)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--accent)] hover:translate-y-[-1px] active:translate-y-0 transition-all duration-200 ease-halo"
+                    className="flex-shrink-0 px-3 py-1.5 text-[9px] font-mono uppercase tracking-[0.12em] border border-[var(--border)] rounded-[var(--radius)] bg-[var(--card)] text-[var(--foreground)] hover:border-[var(--accent)] hover:translate-y-[-1px] active:translate-y-0 transition-all duration-200 ease-halo whitespace-nowrap"
                   >
                     {s.label}
                   </button>
@@ -603,7 +579,14 @@ function GiftAIApp({
             onSubmit={handleSubmit}
             onMicClick={handleToggle}
             placeholder="What gift are you looking for?"
-            micIcon={mode !== 'IDLE' ? activeMicIcon : undefined}
+            micIcon={
+              voice.voiceConnected && voice.micEnabled ? activeMicIcon :
+              voice.voiceConnected && !voice.micEnabled ? (
+                <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-red-400 animate-pulse" />
+              ) :
+              mode !== 'IDLE' ? activeMicIcon :
+              undefined
+            }
             minimizedOrb={
               isOrbMinimized ? (
                 <Orb3D getFrequency={getFrequencyData} getAmplitude={getAmplitude} className="blur-0 scale-[1.1]" />
