@@ -13,7 +13,7 @@
 
 import { useState } from 'react'
 import type { ProductDetail, VariantDetail } from '@/types'
-import { ShoppingCart, Star, ExternalLink } from 'lucide-react'
+import { ShoppingCart, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ChatProductCardProps {
@@ -41,11 +41,12 @@ export default function ChatProductCard({
   const price = defaultVariant
     ? `$${defaultVariant.price.toFixed(2)}`
     : product.priceRange
-  const subtitle = defaultVariant?.name !== 'Default Title'
-    ? defaultVariant?.name
-    : product.variants.length > 1
-      ? `${product.variants.length} variants`
-      : undefined
+  // #16: Hide generic variant names ("Default", "Default Title", "kit", etc.) — only show in detail panel
+  const variantName = defaultVariant?.name?.trim()
+  const isGenericVariant = !variantName || /^(default|default title|kit)$/i.test(variantName)
+  const subtitle = isGenericVariant
+    ? (product.variants.length > 1 ? `${product.variants.length} variants` : undefined)
+    : (product.variants.length > 1 ? variantName : undefined)
 
   const rating = product.tags?.includes('bestseller') ? 4.8 : 4.5 + (product.productId % 5) * 0.1
 
@@ -95,33 +96,20 @@ export default function ChatProductCard({
           </span>
         ) : null}
 
-        {/* Dual action buttons */}
-        <div className="absolute bottom-2 left-2 right-2 flex gap-1.5 opacity-100">
+        {/* Action buttons — gradient backdrop ensures visibility over any image (#9) */}
+        <div className="absolute bottom-0 left-0 right-0 flex gap-1.5 px-2 pb-2 pt-8 bg-gradient-to-t from-black/50 to-transparent">
           {product.isGlobal && product.directCheckoutUrl ? (
-            <>
-              <a
-                href={product.directCheckoutUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-[#5A31F4] hover:bg-[#4926c7] text-white text-xs font-medium rounded-[var(--radius)] transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2C6.81 2 3 5.81 3 10.5S6.81 19 11.5 19h.5v3c4.86-2.34 8-7 8-11.5C20 5.81 16.19 2 11.5 2zm1 14.5h-2v-2h2v2zm0-3.5h-2c0-3.25 3-3 3-5 0-1.1-.9-2-2-2s-2 .9-2 2h-2c0-2.21 1.79-4 4-4s4 1.79 4 4c0 2.5-3 2.75-3 5z"/></svg>
-                Shop Pay
-              </a>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (product.directCheckoutUrl) {
-                    window.open(product.directCheckoutUrl, '_blank', 'noopener,noreferrer')
-                  }
-                }}
-                className="flex items-center gap-1 py-1.5 px-3 bg-[var(--card)]/95 hover:bg-[var(--card)] text-[var(--foreground)] text-xs font-medium rounded-[var(--radius)] border border-[var(--border)] transition-colors"
-              >
-                <ExternalLink size={12} />
-                <span>Visit shop</span>
-              </button>
-            </>
+            /* #15: Global products — ONLY Shop Pay button */
+            <a
+              href={product.directCheckoutUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-[#5A31F4] hover:bg-[#4926c7] text-white text-xs font-medium rounded-[var(--radius)] transition-colors shadow-sm"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M11.5 2C6.81 2 3 5.81 3 10.5S6.81 19 11.5 19h.5v3c4.86-2.34 8-7 8-11.5C20 5.81 16.19 2 11.5 2zm1 14.5h-2v-2h2v2zm0-3.5h-2c0-3.25 3-3 3-5 0-1.1-.9-2-2-2s-2 .9-2 2h-2c0-2.21 1.79-4 4-4s4 1.79 4 4c0 2.5-3 2.75-3 5z"/></svg>
+              Shop Pay
+            </a>
           ) : (
             <>
               <button
@@ -129,7 +117,7 @@ export default function ChatProductCard({
                   e.stopPropagation()
                   onBuyNow?.(product, defaultVariant)
                 }}
-                className="flex-1 py-1.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] text-xs font-medium rounded-[var(--radius)] transition-all"
+                className="flex-1 py-1.5 bg-[var(--brand)] hover:opacity-90 text-white text-xs font-medium rounded-[var(--radius)] transition-all shadow-sm"
               >
                 Buy now
               </button>
@@ -138,7 +126,7 @@ export default function ChatProductCard({
                   e.stopPropagation()
                   onAddToCart?.(product, defaultVariant)
                 }}
-                className="flex items-center gap-1 py-1.5 px-3 bg-[var(--card)]/95 hover:bg-[var(--card)] text-[var(--foreground)] text-xs font-medium rounded-[var(--radius)] border border-[var(--border)] transition-colors"
+                className="flex items-center gap-1 py-1.5 px-3 bg-[var(--card)] backdrop-blur-sm hover:brightness-95 text-[var(--card-foreground)] text-xs font-medium rounded-[var(--radius)] border border-[var(--border)] shadow-sm transition-colors"
               >
                 <ShoppingCart size={12} />
                 <span>Add to cart</span>
