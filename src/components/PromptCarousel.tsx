@@ -51,14 +51,14 @@ const icons: Record<string, React.FC<{ className?: string }>> = {
 };
 
 const SUGGESTIONS = [
-  { id: 'grad', prompt: 'Find a graduation gift for him.', icon: 'GraduationCap' },
-  { id: 'anniv', prompt: 'Suggest unique anniversary gifts for her.', icon: 'Heart' },
-  { id: 'house', prompt: 'What should I buy for a housewarming?', icon: 'House' },
-  { id: 'bday', prompt: 'Need a birthday gift under $50.', icon: 'Gift' },
-  { id: 'retire', prompt: 'Find a luxury retirement gift idea.', icon: 'Trophy' },
-  { id: 'baby', prompt: 'Best baby shower gifts for boys.', icon: 'Baby' },
-  { id: 'mother', prompt: "Suggest a thoughtful Mother's Day gift.", icon: 'Smiley' },
-  { id: 'tech', prompt: 'Find a tech gift for teenagers.', icon: 'DeviceMobile' },
+  { id: 'grad', prompt: 'Show me graduation gifts for men', icon: 'GraduationCap' },
+  { id: 'anniv', prompt: 'Search for anniversary jewelry under $100', icon: 'Heart' },
+  { id: 'house', prompt: 'Show me candles and home decor gifts', icon: 'House' },
+  { id: 'bday', prompt: 'Find birthday gift sets under $50', icon: 'Gift' },
+  { id: 'retire', prompt: 'Search for luxury pen and watch gifts', icon: 'Trophy' },
+  { id: 'baby', prompt: 'Show me baby shower gift baskets', icon: 'Baby' },
+  { id: 'mother', prompt: "Find spa and self-care gifts for Mom", icon: 'Smiley' },
+  { id: 'tech', prompt: 'Search for tech accessories under $40', icon: 'DeviceMobile' },
 ];
 
 export const PromptCarousel: React.FC<PromptCarouselProps> = ({ onSelect, className }) => {

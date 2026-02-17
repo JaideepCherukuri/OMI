@@ -44,8 +44,8 @@ import { ShiningText } from '@/components/ui/shining-text'
 import { useOrbAudio } from '@/hooks/useOrbAudio'
 import { cn } from '@/lib/utils'
 import { AnimatePresence } from 'framer-motion'
-import type { StoreCredentials, ProductDetail, VariantDetail, ChatMessage as ChatMessageType } from '@/types'
-import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight, Globe, Store } from 'lucide-react'
+import type { StoreCredentials, ProductDetail, VariantDetail } from '@/types'
+import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 
 export type SearchMode = 'global' | 'storefront'
 type Theme = 'light' | 'dark'
@@ -60,7 +60,7 @@ export default function Home() {
     accessToken: process.env.NEXT_PUBLIC_SHOPIFY_ACCESS_TOKEN || '',
   })
   const [isConnected, setIsConnected] = useState(false)
-  const [searchMode, setSearchMode] = useState<SearchMode>('storefront')
+  const [searchMode, setSearchMode] = useState<SearchMode>('global')
 
   useEffect(() => {
     if (storeCredentials.accessToken) setIsConnected(true)
@@ -179,29 +179,46 @@ function GiftAIApp({
       setIsOrbMinimized(true)
     }
 
-    // Start sim for visual feedback
+    // Start sim for visual feedback while waiting
     startSim()
 
     // Send message through VoiceProvider
     await voice.sendTextMessage(trimmed)
-  }, [isOrbMinimized, startSim, voice])
+
+    // Stop sim after response received (prevents lingering "Speaking" status)
+    stopAll()
+  }, [isOrbMinimized, startSim, stopAll, voice])
 
   const handlePromptSelect = useCallback((prompt: string) => {
     handleSubmit(prompt)
   }, [handleSubmit])
 
-  // ── orbdesign status text (exact same logic, adapted for GiftAI) ──
-  const statusText = mode === 'MIC' || mode === 'SIM' ? 'Listening...' : 'Tap to start'
+  // ── orbdesign status text — synced with actual voice state ──
+  const statusText = useMemo(() => {
+    if (voice.voiceState === 'speaking') return 'Speaking...'
+    if (voice.voiceState === 'thinking') return 'Thinking...'
+    if (voice.voiceState === 'listening' || mode === 'MIC') return 'Listening...'
+    if (voice.voiceConnecting) return 'Connecting...'
+    if (mode === 'SIM') return 'Processing...'
+    return 'Tap to start'
+  }, [voice.voiceState, voice.voiceConnecting, mode])
 
+  // ── Active status message (above input bar) ──
   let activeStatusMessage: string | null = null
-  if (voice.isTextLoading || voice.voiceState === 'thinking') {
+  if (voice.isTextLoading) {
     activeStatusMessage = 'GiftAI is Thinking'
-  } else if (mode === 'SIM' || voice.voiceState === 'speaking') {
+  } else if (voice.voiceState === 'speaking') {
     activeStatusMessage = 'GiftAI is Speaking'
+  } else if (voice.voiceState === 'thinking') {
+    activeStatusMessage = 'GiftAI is Thinking'
+  } else if (voice.voiceState === 'listening' || mode === 'MIC') {
+    activeStatusMessage = 'GiftAI is Listening'
+  } else if (mode === 'SIM') {
+    activeStatusMessage = 'GiftAI is Processing'
+  } else if (isOrbMinimized && voice.voiceConnected) {
+    activeStatusMessage = 'GiftAI is Ready'
   } else if (isOrbMinimized) {
-    activeStatusMessage = mode === 'MIC' || voice.voiceState === 'listening'
-      ? 'GiftAI is Listening'
-      : 'GiftAI is Ready'
+    activeStatusMessage = null // No status in text-only mode when idle
   }
 
   // ── orbdesign active mic icon (exact same) ──
@@ -220,8 +237,8 @@ function GiftAIApp({
           i === 1 ? "h-4 sm:h-5" : "h-2.5 sm:h-3",
           anim,
           isOrbMinimized
-            ? "bg-[var(--cream)]"
-            : "bg-[var(--foreground)]/70"
+            ? "bg-cream"
+            : "bg-foreground opacity-70"
         )} />
       ))}
     </div>
@@ -336,37 +353,7 @@ function GiftAIApp({
 
         {/* Right: Controls */}
         <div className="flex items-center gap-1">
-          {/* Search mode toggle (only when chat is active) */}
-          {isOrbMinimized && (
-            <div className="flex items-center bg-black/5 dark:bg-white/5 rounded-[var(--radius)] p-0.5 mr-1">
-              <button
-                onClick={() => onSearchModeChange('storefront')}
-                className={cn(
-                  'flex items-center gap-1 px-2 py-1 rounded-[var(--radius)] text-[9px] font-mono uppercase tracking-[0.1em] transition-all',
-                  searchMode === 'storefront'
-                    ? 'bg-[var(--card)] text-[var(--foreground)] shadow-sm'
-                    : 'text-[var(--muted-foreground)]'
-                )}
-              >
-                <Store size={10} />
-                <span className="hidden sm:inline">Store</span>
-              </button>
-              <button
-                onClick={() => onSearchModeChange('global')}
-                className={cn(
-                  'flex items-center gap-1 px-2 py-1 rounded-[var(--radius)] text-[9px] font-mono uppercase tracking-[0.1em] transition-all',
-                  searchMode === 'global'
-                    ? 'bg-[var(--brand)] text-[var(--brand-foreground)] shadow-sm'
-                    : 'text-[var(--muted-foreground)]'
-                )}
-              >
-                <Globe size={10} />
-                <span className="hidden sm:inline">All Shopify</span>
-              </button>
-            </div>
-          )}
-
-          {/* Cart badge (only when chat is active) */}
+          {/* Cart badge + controls (only when chat is active) */}
           {isOrbMinimized && (
             <>
               <button
@@ -377,7 +364,7 @@ function GiftAIApp({
                 <ArrowRightLeft size={14} className="text-[var(--muted-foreground)]" />
               </button>
               <button
-                onClick={() => voice.cartState?.checkoutUrl && setCheckoutOpen(true)}
+                onClick={() => setCheckoutOpen(true)}
                 className="relative p-1.5 rounded-[var(--radius)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
                 title="Cart"
               >
@@ -486,47 +473,54 @@ function GiftAIApp({
       {/* ── CHAT FLOW (appears when minimized) ────────── */}
       {isOrbMinimized && (
         <div className={cn(
-          "relative z-10 flex-1 min-h-0 w-full overflow-auto",
+          "relative z-10 flex-1 min-h-0 w-full flex flex-col",
           "transition-all duration-700 ease-halo",
           "animate-[fadeIn_0.5s_ease-out]"
         )}>
-          <div className="max-w-3xl mx-auto px-4 py-4 space-y-1">
-            {chatItems.map((item) => {
-              if (item.type === 'message') {
-                return <ChatMessage key={item.key} message={item.data} />
-              }
-              if (item.type === 'products') {
-                return (
-                  <div key={item.key} className="py-3">
-                    <ProductCarouselInline
-                      products={item.data as ProductDetail[]}
-                      onProductClick={handleProductClick}
-                      onAddToCart={handleAddToCart}
-                      onBuyNow={handleBuyNow}
-                      highlightedProductId={voice.highlightedProductId}
-                    />
-                  </div>
-                )
-              }
-              if (item.type === 'cart') {
-                return (
-                  <div key={item.key} className="py-2 max-w-lg">
-                    <InlineCartWidget
-                      cartState={item.data}
-                      storeName={storeCredentials.storeUrl.replace('.myshopify.com', '')}
-                      onCheckout={() => setCheckoutOpen(true)}
-                    />
-                  </div>
-                )
-              }
-              return null
-            })}
+          {/* Scrollable chat area */}
+          <div className="flex-1 min-h-0 overflow-auto">
+            <div className="max-w-4xl mx-auto px-4 py-4 space-y-1">
+              {chatItems.map((item) => {
+                if (item.type === 'message') {
+                  return <ChatMessage key={item.key} message={item.data} />
+                }
+                if (item.type === 'products') {
+                  return (
+                    <div key={item.key} className="py-3 overflow-visible">
+                      <ProductCarouselInline
+                        products={item.data as ProductDetail[]}
+                        onProductClick={handleProductClick}
+                        onAddToCart={handleAddToCart}
+                        onBuyNow={handleBuyNow}
+                        highlightedProductId={voice.highlightedProductId}
+                      />
+                    </div>
+                  )
+                }
+                if (item.type === 'cart') {
+                  return (
+                    <div key={item.key} className="py-2 max-w-lg">
+                      <InlineCartWidget
+                        cartState={item.data}
+                        storeName={storeCredentials.storeUrl.replace('.myshopify.com', '')}
+                        onCheckout={() => setCheckoutOpen(true)}
+                      />
+                    </div>
+                  )
+                }
+                return null
+              })}
 
-            {voice.isTextLoading && <ThinkingIndicator />}
+              {voice.isTextLoading && <ThinkingIndicator />}
 
-            {/* Contextual suggestion chips */}
-            {chatSuggestions.length > 0 && (
-              <div className="flex gap-2 flex-wrap py-2">
+              <div ref={chatEndRef} />
+            </div>
+          </div>
+
+          {/* Suggestion chips — pinned above input, outside scroll */}
+          {chatSuggestions.length > 0 && (
+            <div className="flex-shrink-0 w-full max-w-4xl mx-auto px-4 py-2 border-t border-[var(--border)]/30">
+              <div className="flex gap-2 flex-wrap">
                 {chatSuggestions.map((s) => (
                   <button
                     key={s.label}
@@ -537,10 +531,8 @@ function GiftAIApp({
                   </button>
                 ))}
               </div>
-            )}
-
-            <div ref={chatEndRef} />
-          </div>
+            </div>
+          )}
         </div>
       )}
 

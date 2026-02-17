@@ -371,6 +371,20 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     }
   }, [])
 
+  // ── Handle voice transcriptions (streamed to chat) ──
+  const handleTranscription = useCallback((text: string, role: 'user' | 'assistant') => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `voice-${role}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        role,
+        content: text,
+        timestamp: Date.now(),
+        source: 'voice',
+      },
+    ])
+  }, [])
+
   // ── Build context value ────────────────────
   const voiceConnected = shouldConnect && voiceState !== 'disconnected' && voiceState !== 'connecting'
   const voiceConnecting = voiceState === 'connecting'
@@ -435,6 +449,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
           roomRef={roomRef}
           setVoiceState={setVoiceState}
           onAgentData={handleAgentData}
+          onTranscription={handleTranscription}
         />
         {children}
       </LiveKitRoom>
@@ -451,14 +466,19 @@ function VoiceBridge({
   roomRef,
   setVoiceState,
   onAgentData,
+  onTranscription,
 }: {
   roomRef: React.MutableRefObject<any>
   setVoiceState: (state: VoiceState) => void
   onAgentData: (payload: Uint8Array) => void
+  onTranscription: (text: string, role: 'user' | 'assistant') => void
 }) {
   const room = useRoomContext()
   const { state: agentState } = useVoiceAssistant()
   const connectionState = useConnectionState()
+
+  // ── Track seen transcription segment IDs to avoid duplicates ──
+  const seenSegmentIds = useRef(new Set<string>())
 
   // ── Sync room ref to parent ──
   useEffect(() => {
@@ -511,6 +531,36 @@ function VoiceBridge({
       room.off(RoomEvent.DataReceived, handleData)
     }
   }, [room, onAgentData])
+
+  // ── Listen for voice transcriptions (user STT + agent TTS) ──
+  useEffect(() => {
+    if (!room) return
+
+    const handleTranscription = (
+      segments: Array<{ id: string; text: string; final: boolean }>,
+      participant?: { isLocal?: boolean },
+    ) => {
+      // Only process final segments we haven't seen yet
+      const newFinal = segments.filter(
+        (s) => s.final && !seenSegmentIds.current.has(s.id),
+      )
+      if (newFinal.length === 0) return
+
+      // Mark as seen
+      newFinal.forEach((s) => seenSegmentIds.current.add(s.id))
+
+      const text = newFinal.map((s) => s.text).join(' ').trim()
+      if (!text) return
+
+      const role = participant?.isLocal ? 'user' : 'assistant'
+      onTranscription(text, role)
+    }
+
+    room.on(RoomEvent.TranscriptionReceived, handleTranscription)
+    return () => {
+      room.off(RoomEvent.TranscriptionReceived, handleTranscription)
+    }
+  }, [room, onTranscription])
 
   return null // Bridge renders nothing
 }
