@@ -27,7 +27,7 @@ export default function ChatInterface({ credentials, voiceProducts, voiceCartSta
     {
       id: 'welcome',
       role: 'assistant',
-      content: "Hi! 👋 I'm GiftAI, your personal gift shopping assistant. I can help you find the perfect luxury gift for any occasion. What are you looking for today?",
+      content: "Hi! 👋 I'm OMI, your AI shopping homie. I can help you find the perfect luxury gift for any occasion. What are you looking for today?",
       timestamp: Date.now(),
     },
   ])

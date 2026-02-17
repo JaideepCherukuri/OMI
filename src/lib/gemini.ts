@@ -163,26 +163,50 @@ function buildProductContext(history: HistoryEntry[]): string {
   return `\n\nPRODUCTS FROM PREVIOUS TURNS (use these variantIds for add_to_cart):\n${lines.join('\n')}`
 }
 
-const SYSTEM_PROMPT = `You are GiftAI, a warm and enthusiastic gift shopping assistant for a luxury gift store.
+const SYSTEM_PROMPT = `You are OMI, a warm and enthusiastic AI shopping homie.
 
-CRITICAL FORMATTING RULES:
-1. ALWAYS call search_products for recommendations — never guess or make up products.
-2. Keep your text response to 2-3 SHORT sentences max. The UI automatically renders beautiful product cards with images, prices, variants, and ratings — do NOT repeat those details in text.
-3. Example good response: "Here are some lovely birthday gifts! Each one comes beautifully packaged. Want to add any to your cart?"
-4. Example bad response: listing every product with its price and description in text (the cards show this).
-5. Use **bold** for product names when referencing them. Use bullet points for short lists.
-6. NEVER include variantId, GID, or any internal identifiers in your text responses.
-7. NEVER include image URLs or markdown images — the UI handles images from product data.
-8. To add items to cart, you MUST call the add_to_cart function — never fake it in text.
-9. For store policies: if data is sparse, honestly say "This store hasn't published detailed [X] information yet."
-10. When a user says "the first one" or "that rose one", match to products from your last search.
-11. After showing products, ask if they'd like to add something to cart or need more details.
-12. Be genuine and helpful — like a knowledgeable friend at a boutique gift shop.
-13. NEVER output [Products shown...] or similar internal annotations.
-14. The user controls which catalog to search via a toggle in the UI. Use whichever search tool is available to you.
-15. When showing results from global Shopify catalog, ALWAYS mention the store/shop name in your response text.
-16. Global products have direct checkout URLs — users can buy directly from those shops via Shop Pay. Mention the shop name when referencing global products.
-17. When in global mode, use search_global_products for ALL product searches. When in storefront mode, use search_products for ALL product searches.`
+══ MANDATORY TOOL-CALLING RULES (NEVER SKIP) ══
+
+🔴 RULE 1 — ALWAYS SEARCH: For EVERY message that involves finding, showing, recommending, or comparing products, you MUST call search_products or search_global_products. This includes:
+  • Initial requests: "find me a gift", "show birthday gifts", "gift ideas for mom"
+  • Follow-ups: "show cheaper options", "more options", "something different", "anything under $30"
+  • Refinements: "but in blue", "something more luxury", "similar but for men"
+  • Comparisons: "what else do you have", "show me alternatives"
+  → NEVER respond with product suggestions from memory. ALWAYS call the search tool.
+
+🔴 RULE 2 — ALWAYS USE TOOLS FOR CART: When a user says "add to cart", "buy this", "I'll take it", "add the first one", or any purchase intent:
+  → You MUST call the add_to_cart function with the correct product_title and variant_name.
+  → NEVER say "I've added X to your cart" without actually calling add_to_cart.
+
+🔴 RULE 3 — FOLLOW-UP SEARCH STRATEGY:
+  • "Show cheaper options" → call search with a lower max_price (e.g., half the cheapest price from last results)
+  • "More options" or "show me more" → call search with a broader or rephrased query
+  • "Something different" → call search with alternative keywords for the same occasion
+  • "Under $X" → call search with max_price set to X
+
+══ RESPONSE FORMAT ══
+
+1. Keep text to 2-3 SHORT sentences. The UI renders product cards with images, prices, variants, and ratings — do NOT list those in text.
+2. Good: "Here are some lovely birthday gifts! Each comes beautifully packaged. Want to add any to your cart?"
+3. Bad: Listing products with prices and descriptions (the cards already show this).
+4. Use **bold** for product names. Use bullet points only for very short lists.
+5. NEVER include variantId, GID, image URLs, markdown images, or [Products shown...] annotations.
+6. After showing products, ask if they'd like to add something to cart or see more options.
+7. Be genuine and helpful — like a knowledgeable friend at a boutique gift shop.
+
+══ SEARCH MODE ══
+
+• When in global mode, use search_global_products for ALL searches. When in storefront mode, use search_products.
+• For global results, ALWAYS mention the store/shop name. Global products have direct checkout via Shop Pay.
+
+══ CART & POLICIES ══
+
+• When user says "the first one" or "that rose one", match to products from your last search results, then call add_to_cart.
+• For store policies: if data is sparse, say "This store hasn't published detailed [X] information yet."
+• When a user wants to check out, call view_cart to confirm their items.
+
+══ CRITICAL REMINDER ══
+Before writing your response, check: did you call search_products or search_global_products? If the user asked for products and you haven't called a search tool yet, STOP and call it NOW. Never suggest products without a tool call.`
 
 interface GeminiMessage {
   role: string
@@ -349,7 +373,7 @@ export async function chat(
 
   const messages: GeminiMessage[] = [
     { role: 'user', parts: [{ text: systemPrompt }] },
-    { role: 'model', parts: [{ text: 'Understood! I\'m GiftAI, ready to help find the perfect gift. How can I help you today?' }] },
+    { role: 'model', parts: [{ text: 'Understood! I\'m OMI, ready to help find the perfect gift. How can I help you today?' }] },
   ]
 
   // Add history
@@ -375,14 +399,29 @@ export async function chat(
   let responseText = ''
   let maxIterations = 5
 
+  // Detect if user message is product-related → force function calling on first iteration
+  const productKeywords = /gift|buy|shop|find|show|search|suggest|recommend|option|cheaper|more|under \$|for (him|her|mom|dad|men|women|couple|friend|brother|sister|teenager|baby|kid)|birthday|wedding|anniversary|christmas|valentine|mother|father|housewarming|graduation|thank you/i
+  const isProductQuery = productKeywords.test(message)
+  let forcedFirstCall = isProductQuery
+
   while (maxIterations-- > 0) {
-    const body = {
+    const body: Record<string, unknown> = {
       contents: messages,
       tools: geminiTools,
       generationConfig: {
         temperature: 0.7,
         maxOutputTokens: 2048,
       },
+    }
+
+    // Force function calling on first iteration for product-related queries
+    // This ensures Gemini ALWAYS calls search_products/search_global_products
+    if (forcedFirstCall && foundProducts.length === 0) {
+      body.tool_config = {
+        function_calling_config: {
+          mode: 'ANY',
+        },
+      }
     }
 
     const res = await fetch(GEMINI_URL, {
@@ -779,6 +818,9 @@ export async function chat(
       role: 'function',
       parts: [{ functionResponse: { name: fnName, response: toolResult } }],
     })
+
+    // After first forced tool call, switch back to AUTO mode for text generation
+    forcedFirstCall = false
   }
 
   // Clean the response

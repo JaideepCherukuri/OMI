@@ -338,7 +338,8 @@ describe('Orb', () => {
 
     const orb = container.querySelector('button')
     expect(orb).toBeTruthy()
-    expect(orb?.className).toContain('bg-gray-300')
+    // HALO tokens: disconnected uses muted bg with reduced opacity
+    expect(orb?.className).toContain('opacity-50')
   })
 
   it('renders with speaking state', async () => {
@@ -346,7 +347,9 @@ describe('Orb', () => {
     const { container } = render(<Orb state="speaking" />)
 
     const orb = container.querySelector('button')
-    expect(orb?.className).toContain('fuchsia')
+    // HALO tokens: speaking uses olive/sage gradient with speak animation
+    expect(orb?.className).toContain('olive')
+    expect(orb?.className).toContain('animate-orb-speak')
   })
 
   it('renders with listening state and ring animation', async () => {
@@ -638,5 +641,71 @@ describe('CartPanel', () => {
     const { container } = render(<CartPanel isOpen={false} onClose={vi.fn()} cartState={null} />)
 
     expect(container.innerHTML).toBe('')
+  })
+})
+
+// ═══════════════════════════════════════════
+// HALO Design System Tests
+// ═══════════════════════════════════════════
+describe('HALO Design System Integration', () => {
+  it('Orb uses HALO color tokens (olive/forest/sage)', async () => {
+    const Orb = (await import('@/components/Orb')).default
+    const states: VoiceState[] = ['idle', 'listening', 'thinking', 'speaking', 'connecting']
+
+    for (const state of states) {
+      const { container, unmount } = render(<Orb state={state} />)
+      const btn = container.querySelector('button')
+      const cls = btn?.className || ''
+      // All active states should use HALO olive/forest/sage tokens
+      expect(cls).toMatch(/olive|forest|sage|brand-green/)
+      unmount()
+    }
+  })
+
+  it('Orb has HALO motion animations', async () => {
+    const Orb = (await import('@/components/Orb')).default
+
+    const { container: idleCont, unmount: u1 } = render(<Orb state="idle" />)
+    expect(idleCont.querySelector('button')?.className).toContain('animate-orb-breathe')
+    u1()
+
+    const { container: listenCont, unmount: u2 } = render(<Orb state="listening" />)
+    expect(listenCont.querySelector('button')?.className).toContain('animate-orb-listen')
+    u2()
+
+    const { container: thinkCont, unmount: u3 } = render(<Orb state="thinking" />)
+    expect(thinkCont.querySelector('button')?.className).toContain('animate-orb-think')
+    u3()
+  })
+
+  it('Orb has HALO glow effects (shadow tokens)', async () => {
+    const Orb = (await import('@/components/Orb')).default
+
+    const { container, unmount } = render(<Orb state="listening" />)
+    const btn = container.querySelector('button')
+    expect(btn?.className).toContain('shadow-xl')
+    expect(btn?.className).toContain('shadow-olive')
+    unmount()
+  })
+
+  it('PromptCarousel renders suggestion pills', async () => {
+    const { PromptCarousel } = await import('@/components/PromptCarousel')
+    const onSelect = vi.fn()
+    render(<PromptCarousel onSelect={onSelect} />)
+
+    // Should have multiple prompt buttons
+    const buttons = screen.getAllByRole('button')
+    expect(buttons.length).toBeGreaterThan(3)
+  })
+
+  it('PromptCarousel fires onSelect when clicked', async () => {
+    const { PromptCarousel } = await import('@/components/PromptCarousel')
+    const onSelect = vi.fn()
+    render(<PromptCarousel onSelect={onSelect} />)
+
+    const buttons = screen.getAllByRole('button')
+    fireEvent.click(buttons[0])
+    expect(onSelect).toHaveBeenCalledOnce()
+    expect(typeof onSelect.mock.calls[0][0]).toBe('string')
   })
 })

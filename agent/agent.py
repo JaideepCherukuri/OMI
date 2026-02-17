@@ -1,5 +1,5 @@
 """
-GiftAI Voice Agent — LiveKit Agents SDK + Gemini 2.5 Flash Realtime
+OMI Voice Agent — LiveKit Agents SDK + Gemini 2.5 Flash Realtime
 
 Architecture:
   LiveKit Cloud ←→ This Agent ←→ Gemini Realtime (audio + tool calls)
@@ -38,7 +38,7 @@ CATALOG_CLIENT_ID = os.getenv("SHOPIFY_CATALOG_CLIENT_ID", "")
 CATALOG_CLIENT_SECRET = os.getenv("SHOPIFY_CATALOG_CLIENT_SECRET", "")
 
 # Agent personality / system prompt
-AGENT_INSTRUCTIONS = """You are GiftAI — a warm, friendly, and knowledgeable voice assistant
+AGENT_INSTRUCTIONS = """You are OMI — a warm, friendly, and knowledgeable voice assistant
 for gift shopping.
 
 YOU HAVE TWO SEARCH MODES:
@@ -95,12 +95,14 @@ async def entrypoint(ctx: JobContext):
     )
     tools = llm.find_function_tools(shopify)
 
-    # Configure Gemini Realtime model (matching reference implementation exactly)
+    # Configure Gemini Realtime model with input audio transcription
+    # input_audio_transcription enables Gemini to return what it heard (better than LiveKit STT)
     model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
         voice="Puck",
         temperature=0.7,
         modalities=["AUDIO"],
+        input_audio_transcription=google.realtime.InputTranscriptionOptions(),
     )
 
     # Create agent session with tools
@@ -121,11 +123,27 @@ async def entrypoint(ctx: JobContext):
         room_options=room_opts,
     )
 
-    logger.info("Agent session started. Generating greeting...")
+    logger.info("Agent session started. Setting up transcription forwarding...")
+
+    # Forward user input transcriptions to frontend via data channel
+    # This gives much better quality than LiveKit's built-in STT
+    @session.on("user_input_transcribed")
+    def on_user_input_transcribed(event):
+        text = getattr(event, 'transcript', '') or getattr(event, 'text', '') or str(event)
+        text = text.strip()
+        if text and len(text) > 1:
+            try:
+                ctx.room.local_participant.publish_data(
+                    json.dumps({"type": "user_transcription", "text": text}).encode(),
+                    reliable=True
+                )
+                logger.info(f"Forwarded user transcription: {text[:50]}...")
+            except Exception as e:
+                logger.error(f"Failed to forward transcription: {e}")
 
     # Generate initial greeting
     await session.generate_reply(
-        instructions="Greet the user warmly. Welcome them to the gift store. "
+        instructions="Greet the user warmly. Welcome them to OMI, the AI shopping assistant. "
                      "Ask what occasion they're shopping for. Keep it to 2 sentences max."
     )
 

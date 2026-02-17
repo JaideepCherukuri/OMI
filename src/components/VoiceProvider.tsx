@@ -126,7 +126,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const roomRef = useRef<any>(null)
 
-  // ── Connect voice ──────────────────────────
+  // ── Connect voice (sends conversation context for continuity) ──
   const connectVoice = useCallback(async () => {
     try {
       setVoiceState('connecting')
@@ -139,11 +139,26 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       setServerUrl(data.serverUrl)
       setRoomName(data.roomName)
       setShouldConnect(true)
+
+      // Send conversation context to voice agent after short delay (allow connection)
+      setTimeout(() => {
+        if (roomRef.current && messages.length > 0) {
+          try {
+            const context = messages.slice(-8).map(m => `${m.role}: ${m.content}`).join('\n')
+            const payload = new TextEncoder().encode(
+              JSON.stringify({ type: 'text_message', content: `[Context from text chat — continue this conversation]\n${context}\n\nThe user has switched to voice mode. Continue helping them with the same context.` })
+            )
+            roomRef.current.localParticipant.publishData(payload, { reliable: true })
+          } catch (e) {
+            console.warn('Failed to send context to voice agent:', e)
+          }
+        }
+      }, 3000)
     } catch (err) {
       console.error('Voice connect failed:', err)
       setVoiceState('disconnected')
     }
-  }, [roomName])
+  }, [roomName, messages])
 
   // ── Disconnect voice ───────────────────────
   const disconnectVoice = useCallback(() => {
@@ -223,7 +238,10 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     [messages, storeCredentials, cartState, searchMode],
   )
 
-  // ── Send text message (voice data channel or text API) ──
+  // ── Send text message — ALWAYS uses /api/chat for immediate response ──
+  // This ensures text works seamlessly whether voice is connected or not.
+  // Voice agent runs in parallel for audio-based interactions.
+  // Both share the same `messages` state for context continuity.
   const sendTextMessage = useCallback(
     async (text: string) => {
       // Always add user message to state
@@ -238,25 +256,10 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
         },
       ])
 
-      // If voice is connected, try data channel first
-      if (shouldConnect && roomRef.current) {
-        try {
-          const payload = new TextEncoder().encode(
-            JSON.stringify({ type: 'text_message', content: text }),
-          )
-          await roomRef.current.localParticipant.publishData(payload, {
-            reliable: true,
-          })
-          return // Agent will respond via data channel
-        } catch (err) {
-          console.error('Data channel send failed, falling back to text API:', err)
-        }
-      }
-
-      // Fallback: text API
+      // Always use text API — gives immediate response with product cards
       await sendViaTextApi(text)
     },
-    [shouldConnect, sendViaTextApi],
+    [sendViaTextApi],
   )
 
   // ── UI action via data channel ──
@@ -275,13 +278,24 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     [shouldConnect],
   )
 
-  // ── Toggle mic ──
+  // ── Toggle mic (properly mute/unmute the audio track) ──
   const toggleMic = useCallback(() => {
     if (roomRef.current) {
       const pub = roomRef.current.localParticipant.getTrackPublication(Track.Source.Microphone)
       if (pub?.track) {
-        if (micEnabled) pub.mute()
-        else pub.unmute()
+        if (micEnabled) {
+          // Mute: stop the track AND disable the MediaStreamTrack
+          pub.mute()
+          if (pub.track.mediaStreamTrack) {
+            pub.track.mediaStreamTrack.enabled = false
+          }
+        } else {
+          // Unmute: restart the track AND enable the MediaStreamTrack
+          pub.unmute()
+          if (pub.track.mediaStreamTrack) {
+            pub.track.mediaStreamTrack.enabled = true
+          }
+        }
       }
     }
     setMicEnabled((prev) => !prev)
@@ -316,8 +330,31 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       const event = JSON.parse(new TextDecoder().decode(payload))
       const type = event.type as string
 
+      // Handle user transcription from Gemini (higher quality than LiveKit STT)
+      if (type === 'user_transcription') {
+        const text = (event.text || '').trim()
+        if (text) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `voice-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              role: 'user',
+              content: text,
+              timestamp: Date.now(),
+              source: 'voice',
+            },
+          ])
+        }
+        return
+      }
+
       if (type === 'products_found') {
-        const prods = event.products as ProductDetail[]
+        // Ensure voice products match text mode card format (isGlobal + directCheckoutUrl)
+        const prods = (event.products as ProductDetail[]).map(p => ({
+          ...p,
+          isGlobal: p.isGlobal ?? true,
+          directCheckoutUrl: p.directCheckoutUrl || p.shopUrl || '',
+        }))
         setProducts(prods)
         setStageContent('products')
         const query = event.query || 'your request'
@@ -369,6 +406,20 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     } catch (err) {
       console.error('Data channel parse error:', err)
     }
+  }, [])
+
+  // ── Handle voice transcriptions (streamed to chat) ──
+  const handleTranscription = useCallback((text: string, role: 'user' | 'assistant') => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `voice-${role}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        role,
+        content: text,
+        timestamp: Date.now(),
+        source: 'voice',
+      },
+    ])
   }, [])
 
   // ── Build context value ────────────────────
@@ -435,6 +486,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
           roomRef={roomRef}
           setVoiceState={setVoiceState}
           onAgentData={handleAgentData}
+          onTranscription={handleTranscription}
         />
         {children}
       </LiveKitRoom>
@@ -451,14 +503,19 @@ function VoiceBridge({
   roomRef,
   setVoiceState,
   onAgentData,
+  onTranscription,
 }: {
   roomRef: React.MutableRefObject<any>
   setVoiceState: (state: VoiceState) => void
   onAgentData: (payload: Uint8Array) => void
+  onTranscription: (text: string, role: 'user' | 'assistant') => void
 }) {
   const room = useRoomContext()
   const { state: agentState } = useVoiceAssistant()
   const connectionState = useConnectionState()
+
+  // ── Track seen transcription segment IDs to avoid duplicates ──
+  const seenSegmentIds = useRef(new Set<string>())
 
   // ── Sync room ref to parent ──
   useEffect(() => {
@@ -511,6 +568,42 @@ function VoiceBridge({
       room.off(RoomEvent.DataReceived, handleData)
     }
   }, [room, onAgentData])
+
+  // ── Listen for voice transcriptions (ASSISTANT only) ──
+  // User transcription now comes from agent data channel (Gemini quality STT)
+  // LiveKit's TranscriptionReceived is only used for agent speech (TTS text)
+  useEffect(() => {
+    if (!room) return
+
+    const handleTranscription = (
+      segments: Array<{ id: string; text: string; final: boolean }>,
+      participant?: { isLocal?: boolean },
+    ) => {
+      // Skip user transcriptions — they come from agent data channel now
+      // (Gemini's STT is much more accurate than LiveKit's)
+      if (participant?.isLocal) return
+
+      // Only process final segments we haven't seen yet
+      const newFinal = segments.filter(
+        (s) => s.final && !seenSegmentIds.current.has(s.id),
+      )
+      if (newFinal.length === 0) return
+
+      // Mark as seen
+      newFinal.forEach((s) => seenSegmentIds.current.add(s.id))
+
+      const text = newFinal.map((s) => s.text).join(' ').trim()
+      if (!text) return
+
+      // Only forward assistant transcriptions
+      onTranscription(text, 'assistant')
+    }
+
+    room.on(RoomEvent.TranscriptionReceived, handleTranscription)
+    return () => {
+      room.off(RoomEvent.TranscriptionReceived, handleTranscription)
+    }
+  }, [room, onTranscription])
 
   return null // Bridge renders nothing
 }

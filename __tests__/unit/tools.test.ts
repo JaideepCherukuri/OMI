@@ -13,8 +13,15 @@ describe('Tool definitions', () => {
       expect(toolNames).toContain('list_products')
     })
 
-    it('has exactly 6 tools', () => {
-      expect(userTools).toHaveLength(6)
+    it('has exactly 7 tools (including global search)', () => {
+      expect(userTools).toHaveLength(7)
+    })
+
+    it('has search_global_products tool for cross-store search', () => {
+      const toolNames = userTools.map((t) => t.name)
+      expect(toolNames).toContain('search_global_products')
+      const tool = userTools.find((t) => t.name === 'search_global_products')!
+      expect(tool.parameters.required).toContain('query')
     })
 
     it('each tool has name, description, and parameters', () => {

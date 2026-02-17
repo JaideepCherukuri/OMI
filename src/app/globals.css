@@ -2,21 +2,204 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #d8b4fe; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #c084fc; }
+/* ============================================
+   HALO DESIGN SYSTEM — Font Faces
+   PP Neue Montreal (UI) + FK Raster (Display)
+   ============================================ */
 
-/* Orb animations */
+@font-face {
+  font-family: "PP Neue Montreal";
+  src: url("/fonts/PP_Neue_Montreal_Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "PP Neue Montreal";
+  src: url("/fonts/PP_Neue_Montreal_Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "PP Neue Montreal";
+  src: url("/fonts/PP_Neue_Montreal_Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "FK Raster Smooth";
+  src: url("/fonts/FK_Raster_Roman_Compact_Smooth.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ============================================
+   HALO DESIGN SYSTEM — CSS Custom Properties
+   Light Mode (default)
+   ============================================ */
+
+:root {
+  --background: #F4F7EE;
+  --foreground: #0D1F18;
+  --card: #FDFDFD;
+  --card-foreground: #0D1F18;
+  --border: #CBD5A0;
+  --input: #CBD5A0;
+  --ring: #A3BD6A;
+  --accent: #A3BD6A;
+  --accent-foreground: #0D1F18;
+  --brand: #274029;
+  --brand-foreground: #FBFDE2;
+  --muted: #D5DAAD;
+  --muted-foreground: #5a6b4a;
+  --cream: #FBFDE2;
+  --destructive: #dc2626;
+
+  /* Radius — sharp, technical */
+  --radius: 0.125rem;
+
+  /* Shadows — flat */
+  --shadow-sm: none;
+  --shadow-md: none;
+
+  /* Font shortcuts */
+  --font-sans: "PP Neue Montreal", system-ui, sans-serif;
+  --font-display: "FK Raster Smooth", ui-monospace, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Motion */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ============================================
+   Dark Mode
+   ============================================ */
+
+.dark {
+  --background: #000000;
+  --foreground: #FBFDE2;
+  --card: #0A0A0A;
+  --card-foreground: #FBFDE2;
+  --border: rgba(251, 253, 226, 0.15);
+  --input: rgba(251, 253, 226, 0.15);
+  --ring: #FBFDE2;
+  --accent: #FBFDE2;
+  --accent-foreground: #000000;
+  --brand: #FBFDE2;
+  --brand-foreground: #000000;
+  --muted: #0A0A0A;
+  --muted-foreground: rgba(251, 253, 226, 0.55);
+  --cream: #FBFDE2;
+
+  /* Radius — softer in dark */
+  --radius: 0.625rem;
+
+  /* Shadows — subtle elevation */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 2px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ============================================
+   DITHER NOISE OVERLAY
+   ============================================ */
+
+.dither-noise-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1000;
+  mix-blend-mode: overlay;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 200px 200px;
+}
+
+/* ============================================
+   SCROLLBAR STYLING (HALO)
+   ============================================ */
+
+*::-webkit-scrollbar { width: 4px; height: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 2px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* Hide scrollbar for carousel containers */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ============================================
+   TEXTAREA RESET
+   ============================================ */
+
+textarea {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  outline: none;
+  resize: none;
+}
+
+textarea:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* ============================================
+   FOCUS RINGS — Accessibility (HALO mandated)
+   ============================================ */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ============================================
+   ANIMATION UTILITIES (preserved from original + HALO)
+   ============================================ */
+
+/* Orb animations — HALO-themed */
 @keyframes orb-breathe {
   0%, 100% { transform: scale(0.95); opacity: 0.7; }
   50% { transform: scale(1.05); opacity: 1; }
 }
 
 @keyframes orb-listen {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(124,58,237,0.3); }
-  50% { transform: scale(1.08); box-shadow: 0 0 40px rgba(124,58,237,0.6); }
+  0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(163,189,106,0.3); }
+  50% { transform: scale(1.08); box-shadow: 0 0 40px rgba(163,189,106,0.6); }
 }
 
 @keyframes orb-speak {
@@ -46,13 +229,43 @@
 .carousel-container > * { scroll-snap-align: start; }
 .carousel-container::-webkit-scrollbar { display: none; }
 
-/* Product card hover */
-.product-card { transition: all 0.3s ease; }
-.product-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(124,58,237,0.15); }
+/* Product card hover — HALO style */
+.product-card { transition: all 0.3s var(--ease-out-quart); }
+.product-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(163,189,106,0.15); }
 
-/* Stagger animation for product cards (PRD Round 4) */
+/* Stagger animation for product cards */
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(16px) scale(0.96); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
-.animate-fadeInUp { animation: fadeInUp 0.4s ease-out; }
+.animate-fadeInUp { animation: fadeInUp 0.4s var(--ease-out-quart); }
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Marquee pause on hover */
+.hover\:pause:hover {
+  animation-play-state: paused;
+}
+
+/* Reduce motion support */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================
+   SAFE AREA SUPPORT
+   ============================================ */
+
+@supports (padding: max(0px)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
