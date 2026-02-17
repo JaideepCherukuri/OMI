@@ -1,11 +1,9 @@
-'use client'
-
-import React from 'react'
-import { cn } from '@/lib/utils'
+import React from 'react';
+import { cn } from '../lib/utils';
 
 interface PromptCarouselProps {
-  onSelect: (text: string) => void
-  className?: string
+  onSelect: (text: string) => void;
+  className?: string;
 }
 
 /* ── Phosphor-style SVG icons (inline, weight="regular") ── */
@@ -50,7 +48,7 @@ const icons: Record<string, React.FC<{ className?: string }>> = {
       <path d="M176,16H80A24,24,0,0,0,56,40V216a24,24,0,0,0,24,24h96a24,24,0,0,0,24-24V40A24,24,0,0,0,176,16ZM72,64H184V192H72ZM80,32h96a8,8,0,0,1,8,8V48H72V40A8,8,0,0,1,80,32Zm96,192H80a8,8,0,0,1-8-8V208H184v16A8,8,0,0,1,176,224Z" />
     </svg>
   ),
-}
+};
 
 const SUGGESTIONS = [
   { id: 'grad', prompt: 'Find a graduation gift for him.', icon: 'GraduationCap' },
@@ -59,12 +57,12 @@ const SUGGESTIONS = [
   { id: 'bday', prompt: 'Need a birthday gift under $50.', icon: 'Gift' },
   { id: 'retire', prompt: 'Find a luxury retirement gift idea.', icon: 'Trophy' },
   { id: 'baby', prompt: 'Best baby shower gifts for boys.', icon: 'Baby' },
-  { id: 'mother', prompt: "Suggest a thoughtful Mother\'s Day gift.", icon: 'Smiley' },
+  { id: 'mother', prompt: "Suggest a thoughtful Mother's Day gift.", icon: 'Smiley' },
   { id: 'tech', prompt: 'Find a tech gift for teenagers.', icon: 'DeviceMobile' },
-]
+];
 
 export const PromptCarousel: React.FC<PromptCarouselProps> = ({ onSelect, className }) => {
-  const items = [...SUGGESTIONS, ...SUGGESTIONS]
+  const items = [...SUGGESTIONS, ...SUGGESTIONS];
 
   return (
     <div
@@ -79,7 +77,7 @@ export const PromptCarousel: React.FC<PromptCarouselProps> = ({ onSelect, classN
         style={{ paddingLeft: '8%' }}
       >
         {items.map((item, i) => {
-          const Icon = icons[item.icon]
+          const Icon = icons[item.icon];
           return (
             <button
               key={`${item.id}-${i}`}
@@ -89,10 +87,13 @@ export const PromptCarousel: React.FC<PromptCarouselProps> = ({ onSelect, classN
                 "gap-2 sm:gap-2.5",
                 "px-3 py-2 sm:px-3.5 sm:py-2.5",
                 "min-h-[44px]",
+                /* HALO: mono, uppercase, tracked text */
                 "font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.15em] font-normal",
+                /* HALO: sharp radius, 1px border */
                 "rounded-[var(--radius)]",
                 "border border-[var(--border)]",
                 "bg-[var(--card)] text-[var(--foreground)]",
+                /* HALO: transform-only hover */
                 "transition-all duration-200 ease-halo",
                 "hover:border-[var(--accent)] hover:translate-y-[-1px]",
                 "active:translate-y-0",
@@ -102,9 +103,9 @@ export const PromptCarousel: React.FC<PromptCarouselProps> = ({ onSelect, classN
               {Icon && <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4 opacity-60 group-hover:opacity-100 transition-opacity flex-shrink-0" />}
               <span>{item.prompt}</span>
             </button>
-          )
+          );
         })}
       </div>
     </div>
-  )
-}
+  );
+};

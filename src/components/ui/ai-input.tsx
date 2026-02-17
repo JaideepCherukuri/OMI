@@ -18,6 +18,10 @@ interface AIInputProps {
   onFocus?: () => void
   onBlur?: () => void
   disabled?: boolean
+  /** Controlled value — if provided, component becomes controlled */
+  value?: string
+  /** Controlled value change handler */
+  onValueChange?: (value: string) => void
 }
 
 export function AIInput({
@@ -32,13 +36,22 @@ export function AIInput({
   className,
   onFocus,
   onBlur,
-  disabled
+  disabled,
+  value: controlledValue,
+  onValueChange
 }: AIInputProps) {
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight,
     maxHeight,
   });
-  const [inputValue, setInputValue] = useState("");
+  const [internalValue, setInternalValue] = useState("");
+  
+  // Support both controlled and uncontrolled modes
+  const isControlled = controlledValue !== undefined;
+  const inputValue = isControlled ? controlledValue : internalValue;
+  const setInputValue = isControlled
+    ? (v: string) => onValueChange?.(v)
+    : setInternalValue;
 
   const handleReset = () => {
     if (!inputValue.trim()) return;
@@ -77,10 +90,13 @@ export function AIInput({
           }}
           ref={textareaRef}
           value={inputValue}
+          disabled={disabled}
           onChange={(e) => {
             setInputValue(e.target.value);
             adjustHeight();
           }}
+          onFocus={onFocus}
+          onBlur={onBlur}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();

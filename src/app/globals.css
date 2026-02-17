@@ -240,6 +240,11 @@ textarea:focus {
 }
 .animate-fadeInUp { animation: fadeInUp 0.4s var(--ease-out-quart); }
 
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* Marquee pause on hover */
 .hover\:pause:hover {
   animation-play-state: paused;
