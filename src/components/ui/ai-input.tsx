@@ -1,9 +1,9 @@
-"use client"
+"use client";
 
-import { CornerRightUp, Mic, MicOff } from "lucide-react"
-import { useState } from "react"
-import { cn } from "@/lib/utils"
-import { useAutoResizeTextarea } from "@/components/hooks/use-auto-resize-textarea"
+import { CornerRightUp, Mic, MicOff } from "lucide-react";
+import { useState } from "react";
+import { cn } from "../../lib/utils";
+import { useAutoResizeTextarea } from "../hooks/use-auto-resize-textarea";
 
 interface AIInputProps {
   id?: string
@@ -15,11 +15,9 @@ interface AIInputProps {
   micIcon?: React.ReactNode
   minimizedOrb?: React.ReactNode
   className?: string
-  disabled?: boolean
-  value?: string
-  onValueChange?: (value: string) => void
   onFocus?: () => void
   onBlur?: () => void
+  disabled?: boolean
 }
 
 export function AIInput({
@@ -32,30 +30,22 @@ export function AIInput({
   micIcon,
   minimizedOrb,
   className,
-  disabled,
-  value: controlledValue,
-  onValueChange,
   onFocus,
   onBlur,
+  disabled
 }: AIInputProps) {
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight,
     maxHeight,
-  })
-  const [internalValue, setInternalValue] = useState("")
-  
-  const inputValue = controlledValue !== undefined ? controlledValue : internalValue
-  const setInputValue = (v: string) => {
-    if (onValueChange) onValueChange(v)
-    else setInternalValue(v)
-  }
+  });
+  const [inputValue, setInputValue] = useState("");
 
   const handleReset = () => {
-    if (!inputValue.trim()) return
-    onSubmit?.(inputValue)
-    setInputValue("")
-    adjustHeight(true)
-  }
+    if (!inputValue.trim()) return;
+    onSubmit?.(inputValue);
+    setInputValue("");
+    adjustHeight(true);
+  };
 
   return (
     <div className={cn("w-full py-2 sm:py-3", className)}>
@@ -64,6 +54,7 @@ export function AIInput({
           id={id}
           placeholder={placeholder}
           className={cn(
+            /* HALO: PP Neue Montreal (font-sans) + design system radius */
             "w-full font-sans bg-black/5 dark:bg-white/5 rounded-[var(--radius)]",
             "pl-4 sm:pl-5 md:pl-6 pr-20 sm:pr-24",
             "placeholder:text-black/40 dark:placeholder:text-white/40",
@@ -74,6 +65,7 @@ export function AIInput({
             "leading-[1.3] py-[14px] sm:py-4 md:py-[18px]",
             "focus:ring-0 focus:outline-none",
             "appearance-none",
+            // Hide all scrollbars
             "[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]",
             "[&::-webkit-resizer]:hidden"
           )}
@@ -86,25 +78,22 @@ export function AIInput({
           ref={textareaRef}
           value={inputValue}
           onChange={(e) => {
-            setInputValue(e.target.value)
-            adjustHeight()
+            setInputValue(e.target.value);
+            adjustHeight();
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault()
-              handleReset()
+              e.preventDefault();
+              handleReset();
             }
           }}
-          onFocus={onFocus}
-          onBlur={onBlur}
           rows={1}
-          disabled={disabled}
         />
 
-        {/* Background layer */}
+        {/* Background layer (so textarea bg is behind everything) — keeps orb snap working */}
         <div className="absolute inset-0 rounded-[var(--radius)] bg-black/5 dark:bg-white/5 -z-10 pointer-events-none" />
 
-        {/* Mic / Orb Button */}
+        {/* Mic / Orb Button — HALO radius but preserve animation-critical layout */}
         <div
           onClick={onMicClick}
           className={cn(
@@ -135,7 +124,7 @@ export function AIInput({
           </div>
         </div>
 
-        {/* Submit Button */}
+        {/* Submit Button — HALO radius */}
         <button
           onClick={handleReset}
           type="button"
@@ -153,5 +142,5 @@ export function AIInput({
         </button>
       </div>
     </div>
-  )
+  );
 }

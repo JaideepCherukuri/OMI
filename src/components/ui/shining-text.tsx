@@ -1,12 +1,12 @@
 "use client"
 
 import * as React from "react"
-import { motion } from "framer-motion"
-import { cn } from "@/lib/utils"
+import { motion } from "framer-motion";
+import { cn } from "../../lib/utils";
 
 interface ShiningTextProps {
-  text: string
-  className?: string
+  text: string;
+  className?: string;
 }
 
 export function ShiningText({ text, className }: ShiningTextProps) {
@@ -46,5 +46,5 @@ export function ShiningText({ text, className }: ShiningTextProps) {
         {text}
       </motion.span>
     </motion.h1>
-  )
+  );
 }
