@@ -427,8 +427,8 @@ function GiftAIApp({
         isDarkMode ? "bg-[var(--cream)]/5" : "bg-olive/10"
       )} />
 
-      {/* ── Upper Spacer (orbdesign exact) ───────────── */}
-      <div className="flex-[1] min-h-[3rem] sm:min-h-[3.5rem]" />
+      {/* ── Upper Spacer (orbdesign exact — only when orb is showing) ── */}
+      {!isOrbMinimized && <div className="flex-[1] min-h-[3rem] sm:min-h-[3.5rem]" />}
 
       {/* ══════════════════════════════════════════════════
           CENTER AREA — This is where the magic happens.
