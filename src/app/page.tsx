@@ -2,30 +2,36 @@
 
 /**
  * GiftAI — Voice-First Gift Shopping
+ * HALO Design System Integration
  *
- * Layout v2 (Shopify-inspired chat-first):
+ * Two-mode layout:
  *
+ *   PRE-CHAT (0 messages):
+ *   ┌──────────────────────────────┐
+ *   │ Branding + Theme Toggle      │
+ *   │                              │
+ *   │      ● 3D Orb (large)       │
+ *   │      ✨ ShiningText         │
+ *   │      Headline + Subtext      │
+ *   │                              │
+ *   │   [PromptCarousel]           │
+ *   │   [AIInput + Voice]          │
+ *   └──────────────────────────────┘
+ *
+ *   CHAT MODE (1+ messages):
  *   ┌──────────────────────────────┐
  *   │ Header (GiftAI + Cart badge) │
  *   ├──────────────────────────────┤
- *   │                              │
  *   │   CHAT FLOW (scrollable)     │
  *   │   ● AI messages              │
  *   │   [User bubbles]             │
  *   │   [Product cards inline]     │
  *   │   [Cart widgets inline]      │
- *   │                              │
  *   ├──────────────────────────────┤
  *   │   Suggestion Chips           │
  *   ├──────────────────────────────┤
- *   │   Input + 🎤 Voice Orb      │
+ *   │   [AIInput + Voice]          │
  *   └──────────────────────────────┘
- *
- *   + ProductDetailPanel (right-side slide-in)
- *   + CheckoutModal (overlay)
- *
- * Products, cart widgets, and checkout render INLINE in the chat flow,
- * inspired by Shopify's Agentic Commerce demo (Feb 2026).
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
@@ -34,10 +40,18 @@ import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, Che
 import VoiceControls from '@/components/VoiceControls'
 import StoreSwapModal from '@/components/StoreSwapModal'
 import Orb from '@/components/Orb'
+import Orb3D from '@/components/Orb3D'
+import { PromptCarousel } from '@/components/PromptCarousel'
+import { AIInput } from '@/components/ui/ai-input'
+import { ShiningText } from '@/components/ui/shining-text'
+import { useOrbAudio } from '@/hooks/useOrbAudio'
+import { cn } from '@/lib/utils'
+import { AnimatePresence } from 'framer-motion'
 import type { StoreCredentials, ProductDetail, VariantDetail, ChatMessage as ChatMessageType } from '@/types'
-import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight, Globe, Store } from 'lucide-react'
+import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight, Globe, Store, Sun, Moon } from 'lucide-react'
 
 export type SearchMode = 'global' | 'storefront'
+type Theme = 'light' | 'dark'
 
 // ═══════════════════════════════════════════
 // Main Page (with store credentials)
@@ -49,7 +63,6 @@ export default function Home() {
     accessToken: process.env.NEXT_PUBLIC_SHOPIFY_ACCESS_TOKEN || '',
   })
   const [isConnected, setIsConnected] = useState(false)
-
   const [searchMode, setSearchMode] = useState<SearchMode>('storefront')
 
   useEffect(() => {
@@ -84,7 +97,41 @@ export default function Home() {
 }
 
 // ═══════════════════════════════════════════
-// Main App — Chat-First Layout
+// Theme Hook (HALO pattern)
+// ═══════════════════════════════════════════
+
+function useTheme() {
+  const [theme, setTheme] = useState<Theme>('dark')
+
+  useEffect(() => {
+    const stored = localStorage.getItem('halo-theme') as Theme | null
+    if (stored === 'dark' || stored === 'light') {
+      setTheme(stored)
+    } else {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+      setTheme(prefersDark ? 'dark' : 'light')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [theme])
+
+  const toggleTheme = useCallback(() => {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    localStorage.setItem('halo-theme', next)
+  }, [theme])
+
+  return { theme, isDark: theme === 'dark', toggleTheme }
+}
+
+// ═══════════════════════════════════════════
+// Main App — Two-Mode Layout
 // ═══════════════════════════════════════════
 
 function GiftAIApp({
@@ -99,15 +146,18 @@ function GiftAIApp({
   onSearchModeChange: (mode: SearchMode) => void
 }) {
   const voice = useVoice()
+  const { theme, isDark, toggleTheme } = useTheme()
+  const orbAudio = useOrbAudio()
   const [storeSwapOpen, setStoreSwapOpen] = useState(false)
   const [textInput, setTextInput] = useState('')
   const [detailProduct, setDetailProduct] = useState<ProductDetail | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
 
-  // Auto-scroll to bottom on new messages or products
+  const isPreChat = voice.messages.length === 0
+
+  // Auto-scroll on new messages
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [voice.messages.length, voice.products.length, voice.cartState])
@@ -116,24 +166,24 @@ function GiftAIApp({
   const suggestions = useMemo(() => {
     if (voice.products.length > 0) {
       return [
-        { label: '🛒 Add first one', action: 'add_first' },
-        { label: '💡 Tell me more', action: 'tell_more' },
-        { label: '💰 Cheaper options', action: 'cheaper' },
-        { label: '🎁 More options', action: 'more' },
+        { label: 'Add first one', action: 'add_first' },
+        { label: 'Tell me more', action: 'tell_more' },
+        { label: 'Cheaper options', action: 'cheaper' },
+        { label: 'More options', action: 'more' },
       ]
     }
     if (voice.cartState && voice.cartState.totalQuantity > 0) {
       return [
-        { label: '✅ Checkout', action: 'checkout' },
-        { label: '🛍️ Keep shopping', action: 'keep_shopping' },
+        { label: 'Checkout', action: 'checkout' },
+        { label: 'Keep shopping', action: 'keep_shopping' },
       ]
     }
-    if (voice.messages.length <= 1) {
+    if (voice.messages.length <= 1 && voice.messages.length > 0) {
       return [
-        { label: '💝 Valentine\'s gifts', action: 'search_valentines' },
-        { label: '🎂 Birthday ideas', action: 'search_birthday' },
-        { label: '💍 Wedding gifts', action: 'search_wedding' },
-        { label: '✨ Show everything', action: 'search_all' },
+        { label: "Valentine's gifts", action: 'search_valentines' },
+        { label: 'Birthday ideas', action: 'search_birthday' },
+        { label: 'Wedding gifts', action: 'search_wedding' },
+        { label: 'Show everything', action: 'search_all' },
       ]
     }
     return []
@@ -163,14 +213,21 @@ function GiftAIApp({
   )
 
   const handleSubmit = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim()
+      if (!trimmed) return
+      setTextInput('')
+      await voice.sendTextMessage(trimmed)
+    },
+    [voice],
+  )
+
+  const handleFormSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault()
-      const text = textInput.trim()
-      if (!text) return
-      setTextInput('')
-      await voice.sendTextMessage(text)
+      await handleSubmit(textInput)
     },
-    [textInput, voice],
+    [textInput, handleSubmit],
   )
 
   // ── Product actions ──
@@ -228,7 +285,6 @@ function GiftAIApp({
     for (const msg of voice.messages) {
       items.push({ type: 'message', data: msg, key: `msg-${msg.id}` })
 
-      // After AI mentions products, insert product cards
       if (
         !productsInserted &&
         msg.role === 'assistant' &&
@@ -246,7 +302,6 @@ function GiftAIApp({
         productsInserted = true
       }
 
-      // After AI mentions cart, insert cart widget
       if (
         !cartInserted &&
         msg.role === 'assistant' &&
@@ -265,63 +320,200 @@ function GiftAIApp({
       }
     }
 
-    // If products exist but weren't inserted after a message, add at the end
     if (!productsInserted && voice.products.length > 0) {
-      items.push({
-        type: 'products',
-        data: voice.products,
-        key: 'products-end',
-      })
+      items.push({ type: 'products', data: voice.products, key: 'products-end' })
     }
 
-    // Same for cart
     if (!cartInserted && voice.cartState && voice.cartState.totalQuantity > 0) {
-      items.push({
-        type: 'cart',
-        data: voice.cartState,
-        key: 'cart-end',
-      })
+      items.push({ type: 'cart', data: voice.cartState, key: 'cart-end' })
     }
 
     return items
   }, [voice.messages, voice.products, voice.cartState])
 
+  // Voice orb toggle
+  const handleOrbToggle = useCallback(() => {
+    if (voice.voiceState === 'disconnected') {
+      voice.connectVoice()
+    } else if (voice.voiceConnected) {
+      voice.toggleMic()
+    }
+  }, [voice])
+
+  // ═══════════════════════════════════════════
+  // PRE-CHAT MODE
+  // ═══════════════════════════════════════════
+
+  if (isPreChat) {
+    return (
+      <div
+        className={cn(
+          "flex flex-col items-center h-[100dvh] w-screen font-sans overflow-hidden relative",
+          "transition-colors duration-700 ease-halo",
+        )}
+        style={{ backgroundColor: 'var(--background)', color: 'var(--foreground)' }}
+      >
+        {/* Dither Noise Overlay */}
+        <div className="dither-noise-overlay" />
+
+        {/* Top Bar: Branding + Theme Toggle */}
+        <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-5 md:px-6 pt-[max(env(safe-area-inset-top,0px),0.75rem)] pb-2">
+          <div className="flex items-center gap-2 sm:gap-3 select-none pointer-events-none">
+            <span className="font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.15em] text-[var(--muted-foreground)] leading-tight">
+              GiftAI · Voice Shopping
+            </span>
+          </div>
+
+          {/* Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            className={cn(
+              "relative w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center",
+              "border border-[var(--border)] bg-[var(--muted)]/30",
+              "cursor-pointer select-none",
+              "transition-all duration-300 ease-halo",
+              "hover:border-[var(--accent)]",
+            )}
+            aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+          >
+            <Sun className={cn(
+              "w-4 h-4 absolute text-[var(--foreground)] transition-all duration-300",
+              isDark ? "opacity-100 rotate-0 scale-100" : "opacity-0 rotate-90 scale-0"
+            )} />
+            <Moon className={cn(
+              "w-4 h-4 absolute text-[var(--foreground)] transition-all duration-300",
+              !isDark ? "opacity-100 rotate-0 scale-100" : "opacity-0 -rotate-90 scale-0"
+            )} />
+          </button>
+        </div>
+
+        {/* Background Glow */}
+        <div className={cn(
+          "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-none transition-colors duration-700",
+          "w-[60vmin] h-[60vmin] max-w-[350px] max-h-[350px] blur-[60px] sm:blur-[80px] md:blur-[90px]",
+          isDark ? "bg-[var(--cream)]/5" : "bg-olive/10"
+        )} />
+
+        {/* Upper Spacer */}
+        <div className="flex-[1] min-h-[3rem] sm:min-h-[3.5rem]" />
+
+        {/* Main Center Content */}
+        <div className="relative z-10 flex flex-col items-center justify-center w-full px-5 sm:px-6 max-w-3xl mx-auto opacity-100 scale-100">
+          {/* 3D Orb */}
+          <div
+            className="relative rounded-full cursor-pointer transition-transform duration-300 ease-halo hover:scale-105 active:scale-95 group mx-auto w-[clamp(7rem,26vmin,11.5rem)] h-[clamp(7rem,26vmin,11.5rem)]"
+            onClick={handleOrbToggle}
+          >
+            <div className={cn(
+              "absolute inset-0 rounded-full transition-all duration-700",
+              isDark
+                ? "shadow-[0_0_40px_rgba(163,189,106,0.3),inset_0_0_20px_rgba(251,253,226,0.1)]"
+                : "shadow-[0_0_50px_rgba(96,108,72,0.2),inset_0_0_20px_rgba(255,255,255,0.3)]"
+            )} />
+            <div className="w-full h-full rounded-full overflow-hidden relative">
+              <Orb3D getFrequency={orbAudio.getFrequencyData} getAmplitude={orbAudio.getAmplitude} className="blur-[1.2px] scale-[1.45]" />
+            </div>
+          </div>
+
+          {/* Status Text */}
+          <div className="mt-5 sm:mt-7 md:mt-9 min-h-[1.25rem] w-full flex justify-center">
+            <AnimatePresence mode="wait">
+              <ShiningText
+                key={voice.voiceState === 'listening' ? 'Listening...' : 'Tap to start'}
+                text={voice.voiceState === 'listening' ? 'Listening...' : 'Tap to start'}
+                className="tracking-[0.2em] uppercase text-[9px] sm:text-[10px] md:text-xs font-normal"
+              />
+            </AnimatePresence>
+          </div>
+
+          {/* Headline + Subtext */}
+          <div className="flex flex-col items-center text-center w-full mt-3 sm:mt-5 md:mt-6 space-y-1.5 sm:space-y-2.5 md:space-y-3">
+            <h2 className={cn(
+              "font-medium tracking-tight bg-clip-text text-transparent w-full text-center",
+              "text-[clamp(1.375rem,5.5vw,2rem)] leading-[1.15]",
+              "bg-gradient-to-br",
+              "from-[var(--foreground)] via-[var(--foreground)]/70 to-[var(--foreground)]/50"
+            )}>
+              GiftAI, your AI shopping assistant
+            </h2>
+            <p className="font-normal text-[var(--muted-foreground)] tracking-tight w-full text-center text-[clamp(0.8125rem,2.5vw,1rem)]">
+              helps discover the right gifts for any occasion
+            </p>
+          </div>
+        </div>
+
+        {/* Lower Spacer */}
+        <div className="flex-[0.8] min-h-[1rem] sm:min-h-[1.5rem]" />
+
+        {/* Bottom Area: Carousel + Input */}
+        <div className={cn(
+          "w-full z-50 flex flex-col items-center",
+          "gap-2.5 sm:gap-3 md:gap-4",
+          "pb-[max(env(safe-area-inset-bottom,0px),0.5rem)] sm:pb-[max(env(safe-area-inset-bottom,0px),0.75rem)]"
+        )}>
+          <PromptCarousel onSelect={(prompt) => handleSubmit(prompt)} className="w-full" />
+
+          <div className="w-full max-w-xl mx-auto px-4 sm:px-5 md:px-6 flex flex-col items-center">
+            <AIInput
+              onSubmit={handleSubmit}
+              onMicClick={handleOrbToggle}
+              placeholder="What gift are you looking for?"
+              onFocus={handleInputFocus}
+              onBlur={handleInputBlur}
+              disabled={voice.isTextLoading}
+              className="bg-transparent py-0"
+            />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ═══════════════════════════════════════════
+  // CHAT MODE
+  // ═══════════════════════════════════════════
+
   return (
-    <div className="h-dvh flex flex-col bg-gray-50 text-gray-900 overflow-hidden">
+    <div className="h-dvh flex flex-col overflow-hidden font-sans" style={{ backgroundColor: 'var(--background)', color: 'var(--foreground)' }}>
+      {/* Dither Noise Overlay */}
+      <div className="dither-noise-overlay" />
+
       {/* ── Header ────────────────────────────── */}
-      <header className="flex-shrink-0 px-4 py-3 bg-white border-b border-gray-200">
+      <header className="flex-shrink-0 px-4 py-3 bg-[var(--card)] border-b border-[var(--border)] relative z-10">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
           {/* Left: Logo + Orb */}
           <div className="flex items-center gap-3">
             <Orb state={voice.voiceState} size="sm" />
             <div>
-              <h1 className="text-lg font-bold text-gray-900">GiftAI</h1>
-              <p className="text-[11px] text-gray-400 truncate max-w-[180px]">
+              <h1 className="text-lg font-bold text-[var(--card-foreground)]">GiftAI</h1>
+              <p className="text-[11px] text-[var(--muted-foreground)] truncate max-w-[180px] font-mono">
                 {storeCredentials.storeUrl}
               </p>
             </div>
           </div>
 
-          {/* Center: Search mode toggle */}
-          <div className="flex items-center bg-gray-100 rounded-full p-0.5">
+          {/* Center: Search mode toggle — HALO styled */}
+          <div className="flex items-center bg-[var(--muted)]/30 rounded-[var(--radius)] p-0.5">
             <button
               onClick={() => onSearchModeChange('storefront')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius)] text-xs font-medium transition-all',
                 searchMode === 'storefront'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+                  ? 'bg-[var(--card)] text-[var(--foreground)] shadow-sm'
+                  : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+              )}
             >
               <Store size={13} />
               <span className="hidden sm:inline">Our Store</span>
             </button>
             <button
               onClick={() => onSearchModeChange('global')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius)] text-xs font-medium transition-all',
                 searchMode === 'global'
-                  ? 'bg-purple-600 text-white shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+                  ? 'bg-[var(--brand)] text-[var(--brand-foreground)] shadow-sm'
+                  : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+              )}
             >
               <Globe size={13} />
               <span className="hidden sm:inline">All Shopify</span>
@@ -330,12 +522,24 @@ function GiftAIApp({
 
           {/* Right: Actions */}
           <div className="flex items-center gap-1">
+            {/* Theme toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-[var(--radius)] hover:bg-[var(--muted)]/30 transition-colors"
+              title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+            >
+              {isDark ? (
+                <Sun size={18} className="text-[var(--muted-foreground)]" />
+              ) : (
+                <Moon size={18} className="text-[var(--muted-foreground)]" />
+              )}
+            </button>
             <button
               onClick={() => setStoreSwapOpen(true)}
-              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              className="p-2 rounded-[var(--radius)] hover:bg-[var(--muted)]/30 transition-colors"
               title="Switch store"
             >
-              <ArrowRightLeft size={18} className="text-gray-400" />
+              <ArrowRightLeft size={18} className="text-[var(--muted-foreground)]" />
             </button>
             <button
               onClick={() => {
@@ -343,12 +547,12 @@ function GiftAIApp({
                   setCheckoutOpen(true)
                 }
               }}
-              className="relative p-2 rounded-lg hover:bg-gray-100 transition-colors"
+              className="relative p-2 rounded-[var(--radius)] hover:bg-[var(--muted)]/30 transition-colors"
               title="Cart"
             >
-              <ShoppingBag size={20} className="text-gray-600" />
+              <ShoppingBag size={20} className="text-[var(--foreground)]" />
               {cartBadge > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-purple-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                <span className="absolute -top-0.5 -right-0.5 w-5 h-5 bg-[var(--brand)] text-[var(--brand-foreground)] text-[10px] font-bold rounded-full flex items-center justify-center">
                   {cartBadge}
                 </span>
               )}
@@ -360,32 +564,6 @@ function GiftAIApp({
       {/* ── Chat Flow ─────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-auto">
         <div className="max-w-3xl mx-auto px-4 py-4 space-y-1">
-          {/* Welcome state (no messages yet) */}
-          {voice.messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-16 gap-6">
-              <Orb
-                state={voice.voiceState}
-                size="lg"
-                onClick={() => {
-                  if (voice.voiceState === 'disconnected') {
-                    voice.connectVoice()
-                  }
-                }}
-              />
-              <div className="text-center space-y-2">
-                <h2 className="text-xl font-semibold text-gray-800">
-                  What are you looking for?
-                </h2>
-                <p className="text-sm text-gray-500 max-w-xs">
-                  {voice.voiceState === 'disconnected'
-                    ? 'Tap the mic to start voice shopping, or type below'
-                    : 'Listening... tell me what gift you need'}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Chat items (messages + inline products + inline cart) */}
           {chatItems.map((item) => {
             if (item.type === 'message') {
               return <ChatMessage key={item.key} message={item.data} />
@@ -421,23 +599,20 @@ function GiftAIApp({
             return null
           })}
 
-          {/* Loading indicator while waiting for AI response */}
           {voice.isTextLoading && <ThinkingIndicator />}
-
-          {/* Scroll anchor */}
           <div ref={chatEndRef} />
         </div>
       </div>
 
-      {/* ── Suggestion Chips ──────────────────── */}
+      {/* ── Suggestion Chips — HALO styled ──────── */}
       {suggestions.length > 0 && (
-        <div className="flex-shrink-0 px-4 py-2 border-t border-gray-200 bg-white">
-          <div className="max-w-3xl mx-auto flex gap-2 overflow-x-auto pb-0.5">
+        <div className="flex-shrink-0 px-4 py-2 border-t border-[var(--border)] bg-[var(--card)]">
+          <div className="max-w-3xl mx-auto flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
             {suggestions.map((s) => (
               <button
                 key={s.action}
                 onClick={() => handleSuggestion(s.action)}
-                className="flex-shrink-0 px-3.5 py-1.5 text-sm bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-full transition-colors text-gray-700"
+                className="flex-shrink-0 px-3.5 py-1.5 text-xs font-mono uppercase tracking-[0.1em] bg-[var(--muted)]/20 hover:bg-[var(--muted)]/40 border border-[var(--border)] rounded-[var(--radius)] transition-colors text-[var(--foreground)]"
               >
                 {s.label}
               </button>
@@ -447,21 +622,21 @@ function GiftAIApp({
       )}
 
       {/* ── Input + Voice ─────────────────────── */}
-      <div className="flex-shrink-0 px-4 py-3 bg-white border-t border-gray-200">
+      <div className="flex-shrink-0 px-4 py-3 bg-[var(--card)] border-t border-[var(--border)]">
         <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <form onSubmit={handleSubmit} className="flex-1">
-            <input
-              ref={inputRef}
-              type="text"
+          <div className="flex-1">
+            <AIInput
+              onSubmit={handleSubmit}
+              onMicClick={handleOrbToggle}
               value={textInput}
-              onChange={(e) => setTextInput(e.target.value)}
+              onValueChange={setTextInput}
+              placeholder="What are you looking for?"
               onFocus={handleInputFocus}
               onBlur={handleInputBlur}
-              placeholder="What are you looking for?"
-              className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-400 focus:ring-1 focus:ring-purple-200 transition-all"
               disabled={voice.isTextLoading}
+              className="py-0"
             />
-          </form>
+          </div>
           <VoiceControls
             voiceState={voice.voiceState}
             micEnabled={voice.micEnabled}
@@ -572,21 +747,20 @@ function ProductCarouselInline({
         ))}
       </div>
 
-      {/* Scroll arrows */}
       {canScrollLeft && (
         <button
           onClick={() => scroll('left')}
-          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 w-8 h-8 bg-white shadow-md rounded-full flex items-center justify-center hover:bg-gray-50 transition-colors z-10 border border-gray-200"
+          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-2 w-8 h-8 bg-[var(--card)] shadow-md rounded-full flex items-center justify-center hover:bg-[var(--muted)]/30 transition-colors z-10 border border-[var(--border)]"
         >
-          <ChevronLeft size={16} className="text-gray-600" />
+          <ChevronLeft size={16} className="text-[var(--foreground)]" />
         </button>
       )}
       {canScrollRight && (
         <button
           onClick={() => scroll('right')}
-          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 w-8 h-8 bg-white shadow-md rounded-full flex items-center justify-center hover:bg-gray-50 transition-colors z-10 border border-gray-200"
+          className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-2 w-8 h-8 bg-[var(--card)] shadow-md rounded-full flex items-center justify-center hover:bg-[var(--muted)]/30 transition-colors z-10 border border-[var(--border)]"
         >
-          <ChevronRight size={16} className="text-gray-600" />
+          <ChevronRight size={16} className="text-[var(--foreground)]" />
         </button>
       )}
     </div>
@@ -594,7 +768,7 @@ function ProductCarouselInline({
 }
 
 // ═══════════════════════════════════════════
-// Connect Screen
+// Connect Screen — HALO styled
 // ═══════════════════════════════════════════
 
 function ConnectScreen({
@@ -624,41 +798,41 @@ function ConnectScreen({
   }
 
   return (
-    <div className="h-dvh flex items-center justify-center bg-gray-50">
+    <div className="h-dvh flex items-center justify-center font-sans" style={{ backgroundColor: 'var(--background)' }}>
       <div className="w-full max-w-md p-8">
         <div className="text-center mb-8">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 flex items-center justify-center shadow-lg shadow-purple-200/50">
+          <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-olive to-forest flex items-center justify-center shadow-lg shadow-olive/20">
             <span className="text-3xl">🎁</span>
           </div>
-          <h1 className="text-3xl font-bold text-gray-900">GiftAI</h1>
-          <p className="text-gray-500 mt-2">Voice-First Gift Shopping</p>
+          <h1 className="text-3xl font-bold text-[var(--foreground)]">GiftAI</h1>
+          <p className="text-[var(--muted-foreground)] mt-2">Voice-First Gift Shopping</p>
         </div>
 
-        <div className="space-y-4 bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+        <div className="space-y-4 bg-[var(--card)] rounded-[var(--radius)] border border-[var(--border)] p-6 shadow-sm">
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Store URL</label>
+            <label className="block text-sm text-[var(--muted-foreground)] mb-1">Store URL</label>
             <input
               type="text"
               value={storeUrl}
               onChange={(e) => setStoreUrl(e.target.value)}
               placeholder="your-store.myshopify.com"
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-400"
+              className="w-full px-4 py-3 bg-transparent border border-[var(--border)] rounded-[var(--radius)] text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/30"
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-600 mb-1">Access Token</label>
+            <label className="block text-sm text-[var(--muted-foreground)] mb-1">Access Token</label>
             <input
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="shpat_..."
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:border-purple-400"
+              className="w-full px-4 py-3 bg-transparent border border-[var(--border)] rounded-[var(--radius)] text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/30"
             />
           </div>
-          {error && <p className="text-red-500 text-sm">{error}</p>}
+          {error && <p className="text-[var(--destructive)] text-sm">{error}</p>}
           <button
             onClick={handleConnect}
-            className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors"
+            className="w-full py-3 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] rounded-[var(--radius)] font-medium transition-all"
           >
             Connect Store
           </button>

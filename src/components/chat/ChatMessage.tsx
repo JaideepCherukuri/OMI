@@ -1,12 +1,12 @@
 'use client'
 
 /**
- * ChatMessage — Renders a single message in the chat flow.
+ * ChatMessage — HALO Design System styled chat message.
  *
- * Design ref: Shopify "Agentic Commerce":
- *  - User messages: right-aligned with light purple bubble
- *  - AI messages: left-aligned with purple ● dot, formatted text
- *  - System messages: centered, italic, small
+ * Design: olive/forest palette, PP Neue Montreal typography.
+ *  - User messages: right-aligned with sage/olive bubble
+ *  - AI messages: left-aligned with olive ● dot, formatted text
+ *  - System messages: centered, muted
  */
 
 import React, { useMemo } from 'react'
@@ -20,11 +20,9 @@ interface ChatMessageProps {
 /**
  * Lightweight markdown-ish renderer for AI responses.
  * Handles: **bold**, *italic*, bullet lists, numbered lists.
- * No external dependency needed.
  */
 function FormattedText({ text }: { text: string }) {
   const elements = useMemo(() => {
-    // Split into lines for list detection
     const lines = text.split('\n')
     const result: React.ReactNode[] = []
     let currentList: string[] = []
@@ -49,7 +47,6 @@ function FormattedText({ text }: { text: string }) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim()
 
-      // Bullet list: "- text", "* text", "• text"
       const bulletMatch = line.match(/^[-*•]\s+(.+)/)
       if (bulletMatch) {
         if (listType !== 'ul') flushList()
@@ -58,7 +55,6 @@ function FormattedText({ text }: { text: string }) {
         continue
       }
 
-      // Numbered list: "1. text", "2. text"
       const numMatch = line.match(/^\d+[.)]\s+(.+)/)
       if (numMatch) {
         if (listType !== 'ol') flushList()
@@ -67,7 +63,6 @@ function FormattedText({ text }: { text: string }) {
         continue
       }
 
-      // Regular text
       flushList()
       if (line === '') {
         if (result.length > 0) {
@@ -95,26 +90,22 @@ function FormattedText({ text }: { text: string }) {
  */
 function renderInline(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = []
-  // Pattern: **bold** or *italic* (non-greedy)
   const regex = /\*\*(.+?)\*\*|\*(.+?)\*/g
   let lastIndex = 0
   let match: RegExpExecArray | null
 
   while ((match = regex.exec(text)) !== null) {
-    // Text before match
     if (match.index > lastIndex) {
       parts.push(text.slice(lastIndex, match.index))
     }
 
     if (match[1]) {
-      // **bold**
       parts.push(
-        <strong key={`b-${match.index}`} className="font-semibold text-gray-900">
+        <strong key={`b-${match.index}`} className="font-semibold text-[var(--foreground)]">
           {match[1]}
         </strong>
       )
     } else if (match[2]) {
-      // *italic*
       parts.push(
         <em key={`i-${match.index}`}>{match[2]}</em>
       )
@@ -123,7 +114,6 @@ function renderInline(text: string): React.ReactNode[] {
     lastIndex = regex.lastIndex
   }
 
-  // Remaining text
   if (lastIndex < text.length) {
     parts.push(text.slice(lastIndex))
   }
@@ -136,40 +126,40 @@ export default function ChatMessage({ message: msg }: ChatMessageProps) {
   if (msg.role === 'system') {
     return (
       <div className="flex justify-center py-1">
-        <span className="text-xs text-gray-400 italic">{msg.content}</span>
+        <span className="text-xs text-[var(--muted-foreground)] italic font-mono uppercase tracking-wider">{msg.content}</span>
       </div>
     )
   }
 
-  // User messages — right-aligned purple bubble
+  // User messages — right-aligned HALO bubble
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end items-start gap-2 py-1.5">
-        <div className="max-w-[80%] bg-purple-50 border border-purple-100 rounded-2xl rounded-tr-md px-4 py-2.5">
-          <p className="text-sm text-gray-800 leading-relaxed">
+        <div className="max-w-[80%] bg-[var(--muted)]/30 dark:bg-white/5 border border-[var(--border)] rounded-[var(--radius)] rounded-tr-sm px-4 py-2.5">
+          <p className="text-sm text-[var(--foreground)] leading-relaxed font-sans">
             {msg.content}
           </p>
         </div>
         {msg.source === 'voice' ? (
-          <Mic className="w-4 h-4 text-purple-400 flex-shrink-0 mt-2.5" />
+          <Mic className="w-4 h-4 text-[var(--accent)] flex-shrink-0 mt-2.5" />
         ) : (
-          <Keyboard className="w-3.5 h-3.5 text-gray-300 flex-shrink-0 mt-2.5" />
+          <Keyboard className="w-3.5 h-3.5 text-[var(--muted-foreground)] flex-shrink-0 mt-2.5" />
         )}
       </div>
     )
   }
 
-  // AI messages — left-aligned with ● dot, formatted text
+  // AI messages — left-aligned with olive dot
   return (
     <div className="flex items-start gap-2.5 py-1.5 max-w-[90%]">
-      {/* Purple dot indicator */}
-      <div className="w-2.5 h-2.5 rounded-full bg-purple-500 flex-shrink-0 mt-2" />
+      {/* Olive dot indicator */}
+      <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent)] flex-shrink-0 mt-2" />
 
-      {/* Message text with markdown rendering */}
-      <div className="text-sm text-gray-700 leading-relaxed">
+      {/* Message text */}
+      <div className="text-sm text-[var(--foreground)]/80 leading-relaxed font-sans">
         <FormattedText text={msg.content} />
         {msg.streaming && (
-          <span className="inline-block w-1.5 h-4 bg-purple-400 ml-0.5 animate-pulse rounded-sm" />
+          <span className="inline-block w-1.5 h-4 bg-[var(--accent)] ml-0.5 animate-pulse rounded-sm" />
         )}
       </div>
     </div>
@@ -182,11 +172,11 @@ export default function ChatMessage({ message: msg }: ChatMessageProps) {
 export function ThinkingIndicator() {
   return (
     <div className="flex items-start gap-2.5 py-1.5">
-      <div className="w-2.5 h-2.5 rounded-full bg-purple-500 flex-shrink-0 mt-2" />
+      <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent)] flex-shrink-0 mt-2" />
       <div className="flex items-center gap-1 py-2 px-1">
-        <div className="w-2 h-2 bg-purple-300 rounded-full animate-bounce [animation-delay:0ms]" />
-        <div className="w-2 h-2 bg-purple-300 rounded-full animate-bounce [animation-delay:150ms]" />
-        <div className="w-2 h-2 bg-purple-300 rounded-full animate-bounce [animation-delay:300ms]" />
+        <div className="w-2 h-2 bg-[var(--accent)]/50 rounded-full animate-bounce [animation-delay:0ms]" />
+        <div className="w-2 h-2 bg-[var(--accent)]/50 rounded-full animate-bounce [animation-delay:150ms]" />
+        <div className="w-2 h-2 bg-[var(--accent)]/50 rounded-full animate-bounce [animation-delay:300ms]" />
       </div>
     </div>
   )

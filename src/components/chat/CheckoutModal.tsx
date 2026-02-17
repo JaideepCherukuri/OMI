@@ -1,26 +1,13 @@
 'use client'
 
 /**
- * CheckoutModal — Embedded checkout overlay.
- *
- * Design ref: Shopify screenshots 5 & 6:
- *  - Modal overlay on top of chat
- *  - Store branding at top
- *  - Ship to, Shipping method, Payment, Pay now
- *  - Order confirmation with map
- *
- * In production, this would integrate Shopify's Checkout Kit:
- *   <shopify-checkout></shopify-checkout>
- *
- * For now, we use an iframe or redirect approach with the
- * Shopify checkout URL. When Checkout MCP access is available,
- * this becomes a fully embedded experience.
+ * CheckoutModal — HALO Design System styled checkout overlay.
  */
 
 import { useState, useEffect, useRef } from 'react'
 import type { CartState } from '@/types'
 import { X, ExternalLink, Lock } from 'lucide-react'
-import clsx from 'clsx'
+import { cn } from '@/lib/utils'
 
 interface CheckoutModalProps {
   isOpen: boolean
@@ -41,7 +28,6 @@ export default function CheckoutModal({
   const [useIframe, setUseIframe] = useState(true)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  // Reset iframe state when modal opens
   useEffect(() => {
     if (isOpen) {
       setIframeLoaded(false)
@@ -49,7 +35,6 @@ export default function CheckoutModal({
     }
   }, [isOpen])
 
-  // Fallback: if iframe fails to load (CORS/X-Frame-Options), show redirect option
   useEffect(() => {
     if (!isOpen || !useIframe) return
     const timer = setTimeout(() => {
@@ -64,40 +49,37 @@ export default function CheckoutModal({
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         onClick={onClose}
       >
-        {/* Modal */}
         <div
-          className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
+          className="bg-[var(--card)] rounded-[var(--radius)] shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col font-sans"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
             <div>
-              <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">
+              <h3 className="text-sm font-bold text-[var(--card-foreground)] uppercase tracking-[0.15em] font-mono">
                 {storeName || 'Checkout'}
               </h3>
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+              className="p-1.5 rounded-[var(--radius)] hover:bg-[var(--muted)]/30 transition-colors"
             >
-              <X size={18} className="text-gray-400" />
+              <X size={18} className="text-[var(--muted-foreground)]" />
             </button>
           </div>
 
           {/* Content */}
           <div className="flex-1 overflow-auto">
             {checkoutUrl && useIframe ? (
-              /* Embedded Checkout (iframe approach) */
               <div className="relative w-full h-[500px]">
                 {!iframeLoaded && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                    <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm text-gray-500">
+                    <div className="w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm text-[var(--muted-foreground)]">
                       Loading checkout...
                     </p>
                   </div>
@@ -113,12 +95,10 @@ export default function CheckoutModal({
                 />
               </div>
             ) : checkoutUrl ? (
-              /* Fallback: Redirect approach */
               <div className="p-6 space-y-6">
-                {/* Cart summary */}
                 {cartState && (
                   <div className="space-y-3">
-                    <h4 className="text-sm font-medium text-gray-700">
+                    <h4 className="text-sm font-medium text-[var(--foreground)]">
                       Order Summary
                     </h4>
                     {cartState.lines.map((line) => (
@@ -128,7 +108,7 @@ export default function CheckoutModal({
                       >
                         <div className="flex items-center gap-3">
                           {line.imageUrl && (
-                            <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100">
+                            <div className="w-10 h-10 rounded-[var(--radius)] overflow-hidden bg-[var(--muted)]/20">
                               <img
                                 src={line.imageUrl}
                                 alt={line.productTitle}
@@ -137,43 +117,42 @@ export default function CheckoutModal({
                             </div>
                           )}
                           <div>
-                            <p className="text-sm font-medium text-gray-900">
+                            <p className="text-sm font-medium text-[var(--foreground)]">
                               {line.productTitle}
                             </p>
-                            <p className="text-xs text-gray-500">
+                            <p className="text-xs text-[var(--muted-foreground)]">
                               {line.variantTitle} × {line.quantity}
                             </p>
                           </div>
                         </div>
-                        <p className="text-sm font-medium text-gray-900">
+                        <p className="text-sm font-medium text-[var(--foreground)]">
                           ${line.price}
                         </p>
                       </div>
                     ))}
 
-                    <div className="pt-3 border-t border-gray-100 flex justify-between">
-                      <span className="font-medium text-gray-900">Total</span>
-                      <span className="text-lg font-bold text-gray-900">
+                    <div className="pt-3 border-t border-[var(--border)] flex justify-between">
+                      <span className="font-medium text-[var(--foreground)]">Total</span>
+                      <span className="text-lg font-bold text-[var(--foreground)]">
                         {cartState.currency} ${cartState.totalAmount}
                       </span>
                     </div>
                   </div>
                 )}
 
-                {/* Secure checkout button */}
                 <div className="space-y-3">
                   <a
                     href={checkoutUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full flex items-center justify-center gap-2 py-3.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors"
+                    className="w-full flex items-center justify-center gap-2 py-3.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] rounded-[var(--radius)] font-medium transition-all"
                   >
                     <Lock size={16} />
                     <span>Secure Checkout</span>
                     <ExternalLink size={14} />
                   </a>
 
-                  <p className="text-xs text-gray-400 text-center flex items-center justify-center gap-1">
+                  <p className="text-xs text-[var(--muted-foreground)] text-center flex items-center justify-center gap-1">
                     <Lock size={10} />
                     You&apos;ll be taken to {storeName || 'the store'}&apos;s
                     secure checkout
@@ -181,9 +160,8 @@ export default function CheckoutModal({
                 </div>
               </div>
             ) : (
-              /* No checkout URL */
               <div className="p-8 text-center">
-                <p className="text-gray-500">
+                <p className="text-[var(--muted-foreground)]">
                   No checkout URL available. Add items to your cart first.
                 </p>
               </div>
