@@ -353,7 +353,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
         const prods = (event.products as ProductDetail[]).map(p => ({
           ...p,
           isGlobal: p.isGlobal ?? true,
-          directCheckoutUrl: p.directCheckoutUrl || p.onlineStoreUrl || '',
+          directCheckoutUrl: p.directCheckoutUrl || p.shopUrl || '',
         }))
         setProducts(prods)
         setStageContent('products')
