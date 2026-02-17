@@ -274,9 +274,15 @@ function GiftAIApp({
   const chatSuggestions = useMemo(() => {
     if (!isOrbMinimized) return []
     if (voice.products.length > 0) {
+      const firstProduct = voice.products[0]
+      const isGlobal = firstProduct?.isGlobal
+      // For global products: no "Add to cart" (only Shop Pay works), show "Shop first one" instead
+      const firstAction = isGlobal
+        ? { label: 'Shop first one', text: firstProduct?.title ? `Tell me more about ${firstProduct.title}` : 'Tell me about the first one', url: firstProduct?.directCheckoutUrl }
+        : { label: 'Add first one', text: firstProduct?.title ? `Add ${firstProduct.title} to my cart` : 'Add the first one to my cart' }
       return [
-        { label: 'Add first one', text: voice.products[0]?.title ? `Add ${voice.products[0].title} to my cart` : 'Add the first one to my cart' },
-        { label: 'Tell me more', text: voice.products[0]?.title ? `Tell me more about ${voice.products[0].title}` : 'Tell me more about the first one' },
+        firstAction,
+        { label: 'Tell me more', text: firstProduct?.title ? `Tell me more about ${firstProduct.title}` : 'Tell me more about the first one' },
         { label: 'Cheaper options', text: 'Show me cheaper options' },
         { label: 'More options', text: 'Show me more gift options' },
       ]
@@ -293,28 +299,27 @@ function GiftAIApp({
   // ── Interleave messages with product cards + cart ──
   const chatItems = useMemo(() => {
     const items: Array<{ type: 'message' | 'products' | 'cart'; data: any; key: string }> = []
-    let productsInserted = false
     let cartInserted = false
 
     for (const msg of voice.messages) {
       items.push({ type: 'message', data: msg, key: `msg-${msg.id}` })
 
-      if (!productsInserted && msg.role === 'assistant' && voice.products.length > 0 &&
-        (msg.content.toLowerCase().includes('found') || msg.content.toLowerCase().includes('option') ||
-         msg.content.toLowerCase().includes('product') || msg.content.toLowerCase().includes('here'))) {
-        items.push({ type: 'products', data: voice.products, key: `products-${msg.id}` })
-        productsInserted = true
+      // Show product cards for EVERY assistant message that has products attached
+      if (msg.role === 'assistant' && msg.products?.length) {
+        items.push({ type: 'products', data: msg.products, key: `products-${msg.id}` })
       }
 
-      if (!cartInserted && msg.role === 'assistant' && voice.cartState && voice.cartState.totalQuantity > 0 &&
+      if (!cartInserted && msg.role === 'assistant' && (msg.cartState || voice.cartState) &&
+        (voice.cartState?.totalQuantity ?? 0) > 0 &&
         (msg.content.toLowerCase().includes('cart') || msg.content.toLowerCase().includes('added') ||
          msg.content.toLowerCase().includes('checkout'))) {
-        items.push({ type: 'cart', data: voice.cartState, key: `cart-${msg.id}` })
+        items.push({ type: 'cart', data: msg.cartState || voice.cartState, key: `cart-${msg.id}` })
         cartInserted = true
       }
     }
 
-    if (!productsInserted && voice.products.length > 0) {
+    // Fallback: if latest products exist but weren't attached to any message, show at end
+    if (!items.some(i => i.type === 'products') && voice.products.length > 0) {
       items.push({ type: 'products', data: voice.products, key: 'products-end' })
     }
     if (!cartInserted && voice.cartState && voice.cartState.totalQuantity > 0) {

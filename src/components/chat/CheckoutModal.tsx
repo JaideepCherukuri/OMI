@@ -58,6 +58,19 @@ export default function CheckoutModal({
     return () => clearTimeout(timer)
   }, [isOpen, iframeFailed, iframeLoaded])
 
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
+
   if (!isOpen) return null
 
   const isCartEmpty = !cartState || !cartState.lines || cartState.lines.length === 0
