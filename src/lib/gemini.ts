@@ -399,14 +399,29 @@ export async function chat(
   let responseText = ''
   let maxIterations = 5
 
+  // Detect if user message is product-related → force function calling on first iteration
+  const productKeywords = /gift|buy|shop|find|show|search|suggest|recommend|option|cheaper|more|under \$|for (him|her|mom|dad|men|women|couple|friend|brother|sister|teenager|baby|kid)|birthday|wedding|anniversary|christmas|valentine|mother|father|housewarming|graduation|thank you/i
+  const isProductQuery = productKeywords.test(message)
+  let forcedFirstCall = isProductQuery
+
   while (maxIterations-- > 0) {
-    const body = {
+    const body: Record<string, unknown> = {
       contents: messages,
       tools: geminiTools,
       generationConfig: {
         temperature: 0.7,
         maxOutputTokens: 2048,
       },
+    }
+
+    // Force function calling on first iteration for product-related queries
+    // This ensures Gemini ALWAYS calls search_products/search_global_products
+    if (forcedFirstCall && foundProducts.length === 0) {
+      body.tool_config = {
+        function_calling_config: {
+          mode: 'ANY',
+        },
+      }
     }
 
     const res = await fetch(GEMINI_URL, {
@@ -803,6 +818,9 @@ export async function chat(
       role: 'function',
       parts: [{ functionResponse: { name: fnName, response: toolResult } }],
     })
+
+    // After first forced tool call, switch back to AUTO mode for text generation
+    forcedFirstCall = false
   }
 
   // Clean the response
