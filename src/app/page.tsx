@@ -300,6 +300,7 @@ function GiftAIApp({
   const chatItems = useMemo(() => {
     const items: Array<{ type: 'message' | 'products' | 'cart'; data: any; key: string }> = []
     let cartInserted = false
+    let lastShownProductIds = new Set<number>()
 
     for (const msg of voice.messages) {
       items.push({ type: 'message', data: msg, key: `msg-${msg.id}` })
@@ -307,6 +308,7 @@ function GiftAIApp({
       // Show product cards for EVERY assistant message that has products attached
       if (msg.role === 'assistant' && msg.products?.length) {
         items.push({ type: 'products', data: msg.products, key: `products-${msg.id}` })
+        lastShownProductIds = new Set(msg.products.map((p: any) => p.productId))
       }
 
       if (!cartInserted && msg.role === 'assistant' && (msg.cartState || voice.cartState) &&
@@ -318,9 +320,14 @@ function GiftAIApp({
       }
     }
 
-    // Fallback: if latest products exist but weren't attached to any message, show at end
-    if (!items.some(i => i.type === 'products') && voice.products.length > 0) {
-      items.push({ type: 'products', data: voice.products, key: 'products-end' })
+    // Fallback: show voice.products at end if they differ from the last shown set
+    // This catches cases where Gemini returned products but they weren't attached to msg.products
+    if (voice.products.length > 0) {
+      const currentProductIds = new Set(voice.products.map(p => p.productId))
+      const isDifferent = voice.products.some(p => !lastShownProductIds.has(p.productId))
+      if (isDifferent || lastShownProductIds.size === 0) {
+        items.push({ type: 'products', data: voice.products, key: `products-latest-${voice.products[0]?.productId}` })
+      }
     }
     if (!cartInserted && voice.cartState && voice.cartState.totalQuantity > 0) {
       items.push({ type: 'cart', data: voice.cartState, key: 'cart-end' })
