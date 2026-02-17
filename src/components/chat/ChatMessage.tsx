@@ -10,6 +10,7 @@
  */
 
 import React, { useMemo } from 'react'
+import Image from 'next/image'
 import { Mic, Keyboard } from 'lucide-react'
 import type { ChatMessage as ChatMessageType } from '@/types'
 
@@ -149,11 +150,11 @@ export default function ChatMessage({ message: msg }: ChatMessageProps) {
     )
   }
 
-  // AI messages — left-aligned with olive dot
+  // AI messages — left-aligned with OMI mini logo
   return (
     <div className="flex items-start gap-2.5 py-1.5 max-w-[90%]">
-      {/* Olive dot indicator */}
-      <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent)] flex-shrink-0 mt-2" />
+      {/* OMI avatar */}
+      <Image src="/omi-logo.png" alt="OMI" width={20} height={20} className="rounded-md flex-shrink-0 mt-1" />
 
       {/* Message text */}
       <div className="text-sm text-[var(--foreground)]/80 leading-relaxed font-sans">
@@ -172,7 +173,7 @@ export default function ChatMessage({ message: msg }: ChatMessageProps) {
 export function ThinkingIndicator() {
   return (
     <div className="flex items-start gap-2.5 py-1.5">
-      <div className="w-2.5 h-2.5 rounded-full bg-[var(--accent)] flex-shrink-0 mt-2" />
+      <Image src="/omi-logo.png" alt="OMI" width={20} height={20} className="rounded-md flex-shrink-0 mt-1" />
       <div className="flex items-center gap-1 py-2 px-1">
         <div className="w-2 h-2 bg-[var(--accent)]/50 rounded-full animate-bounce [animation-delay:0ms]" />
         <div className="w-2 h-2 bg-[var(--accent)]/50 rounded-full animate-bounce [animation-delay:150ms]" />

@@ -275,13 +275,24 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     [shouldConnect],
   )
 
-  // ── Toggle mic ──
+  // ── Toggle mic (properly mute/unmute the audio track) ──
   const toggleMic = useCallback(() => {
     if (roomRef.current) {
       const pub = roomRef.current.localParticipant.getTrackPublication(Track.Source.Microphone)
       if (pub?.track) {
-        if (micEnabled) pub.mute()
-        else pub.unmute()
+        if (micEnabled) {
+          // Mute: stop the track AND disable the MediaStreamTrack
+          pub.mute()
+          if (pub.track.mediaStreamTrack) {
+            pub.track.mediaStreamTrack.enabled = false
+          }
+        } else {
+          // Unmute: restart the track AND enable the MediaStreamTrack
+          pub.unmute()
+          if (pub.track.mediaStreamTrack) {
+            pub.track.mediaStreamTrack.enabled = true
+          }
+        }
       }
     }
     setMicEnabled((prev) => !prev)
@@ -315,6 +326,24 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     try {
       const event = JSON.parse(new TextDecoder().decode(payload))
       const type = event.type as string
+
+      // Handle user transcription from Gemini (higher quality than LiveKit STT)
+      if (type === 'user_transcription') {
+        const text = (event.text || '').trim()
+        if (text) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `voice-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              role: 'user',
+              content: text,
+              timestamp: Date.now(),
+              source: 'voice',
+            },
+          ])
+        }
+        return
+      }
 
       if (type === 'products_found') {
         const prods = event.products as ProductDetail[]
@@ -532,7 +561,9 @@ function VoiceBridge({
     }
   }, [room, onAgentData])
 
-  // ── Listen for voice transcriptions (user STT + agent TTS) ──
+  // ── Listen for voice transcriptions (ASSISTANT only) ──
+  // User transcription now comes from agent data channel (Gemini quality STT)
+  // LiveKit's TranscriptionReceived is only used for agent speech (TTS text)
   useEffect(() => {
     if (!room) return
 
@@ -540,6 +571,10 @@ function VoiceBridge({
       segments: Array<{ id: string; text: string; final: boolean }>,
       participant?: { isLocal?: boolean },
     ) => {
+      // Skip user transcriptions — they come from agent data channel now
+      // (Gemini's STT is much more accurate than LiveKit's)
+      if (participant?.isLocal) return
+
       // Only process final segments we haven't seen yet
       const newFinal = segments.filter(
         (s) => s.final && !seenSegmentIds.current.has(s.id),
@@ -552,8 +587,8 @@ function VoiceBridge({
       const text = newFinal.map((s) => s.text).join(' ').trim()
       if (!text) return
 
-      const role = participant?.isLocal ? 'user' : 'assistant'
-      onTranscription(text, role)
+      // Only forward assistant transcriptions
+      onTranscription(text, 'assistant')
     }
 
     room.on(RoomEvent.TranscriptionReceived, handleTranscription)

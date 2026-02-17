@@ -163,7 +163,7 @@ function buildProductContext(history: HistoryEntry[]): string {
   return `\n\nPRODUCTS FROM PREVIOUS TURNS (use these variantIds for add_to_cart):\n${lines.join('\n')}`
 }
 
-const SYSTEM_PROMPT = `You are GiftAI, a warm and enthusiastic gift shopping assistant.
+const SYSTEM_PROMPT = `You are OMI, a warm and enthusiastic AI shopping homie.
 
 ══ MANDATORY TOOL-CALLING RULES (NEVER SKIP) ══
 
@@ -373,7 +373,7 @@ export async function chat(
 
   const messages: GeminiMessage[] = [
     { role: 'user', parts: [{ text: systemPrompt }] },
-    { role: 'model', parts: [{ text: 'Understood! I\'m GiftAI, ready to help find the perfect gift. How can I help you today?' }] },
+    { role: 'model', parts: [{ text: 'Understood! I\'m OMI, ready to help find the perfect gift. How can I help you today?' }] },
   ]
 
   // Add history

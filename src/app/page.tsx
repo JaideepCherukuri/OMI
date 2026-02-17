@@ -36,7 +36,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { VoiceProvider, useVoice } from '@/components/VoiceProvider'
 import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal, ThinkingIndicator } from '@/components/chat'
-import StoreSwapModal from '@/components/StoreSwapModal'
+// StoreSwapModal removed — OMI defaults to global mode
 import Orb3D from '@/components/Orb3D'
 import { PromptCarousel } from '@/components/PromptCarousel'
 import { AIInput } from '@/components/ui/ai-input'
@@ -45,7 +45,8 @@ import { useOrbAudio } from '@/hooks/useOrbAudio'
 import { cn } from '@/lib/utils'
 import { AnimatePresence } from 'framer-motion'
 import type { StoreCredentials, ProductDetail, VariantDetail } from '@/types'
-import { ShoppingBag, ArrowRightLeft, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ShoppingBag, ChevronLeft, ChevronRight, Mic, MicOff, MessageSquare } from 'lucide-react'
+import Image from 'next/image'
 
 export type SearchMode = 'global' | 'storefront'
 type Theme = 'light' | 'dark'
@@ -59,12 +60,9 @@ export default function Home() {
     storeUrl: process.env.NEXT_PUBLIC_SHOPIFY_STORE_URL || 'jaguar-9969.myshopify.com',
     accessToken: process.env.NEXT_PUBLIC_SHOPIFY_ACCESS_TOKEN || '',
   })
-  const [isConnected, setIsConnected] = useState(false)
+  // Skip ConnectScreen entirely — always auto-connect in global mode
+  const [isConnected, setIsConnected] = useState(true)
   const [searchMode, setSearchMode] = useState<SearchMode>('global')
-
-  useEffect(() => {
-    if (storeCredentials.accessToken) setIsConnected(true)
-  }, [storeCredentials.accessToken])
 
   if (!isConnected) {
     return <ConnectScreen onConnect={(creds) => { setStoreCredentials(creds); setIsConnected(true) }} />
@@ -106,7 +104,7 @@ function GiftAIApp({
   const isDarkMode = theme === 'dark'
 
   // ── GiftAI state ──
-  const [storeSwapOpen, setStoreSwapOpen] = useState(false)
+  // storeSwapOpen removed — OMI defaults to global
   const [detailProduct, setDetailProduct] = useState<ProductDetail | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
@@ -206,17 +204,17 @@ function GiftAIApp({
   // ── Active status message (above input bar) ──
   let activeStatusMessage: string | null = null
   if (voice.isTextLoading) {
-    activeStatusMessage = 'GiftAI is Thinking'
+    activeStatusMessage = 'OMI is Thinking'
   } else if (voice.voiceState === 'speaking') {
-    activeStatusMessage = 'GiftAI is Speaking'
+    activeStatusMessage = 'OMI is Speaking'
   } else if (voice.voiceState === 'thinking') {
-    activeStatusMessage = 'GiftAI is Thinking'
+    activeStatusMessage = 'OMI is Thinking'
   } else if (voice.voiceState === 'listening' || mode === 'MIC') {
-    activeStatusMessage = 'GiftAI is Listening'
+    activeStatusMessage = 'OMI is Listening'
   } else if (mode === 'SIM') {
-    activeStatusMessage = 'GiftAI is Processing'
+    activeStatusMessage = 'OMI is Processing'
   } else if (isOrbMinimized && voice.voiceConnected) {
-    activeStatusMessage = 'GiftAI is Ready'
+    activeStatusMessage = 'OMI is Ready'
   } else if (isOrbMinimized) {
     activeStatusMessage = null // No status in text-only mode when idle
   }
@@ -354,27 +352,55 @@ function GiftAIApp({
       {/* ── Dither Noise Overlay (orbdesign) ──────────── */}
       <div className="dither-noise-overlay" />
 
-      {/* ── Top Bar (orbdesign + GiftAI controls) ──────── */}
+      {/* ── Top Bar (OMI branding + controls) ──────── */}
       <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-5 md:px-6 pt-[max(env(safe-area-inset-top,0px),0.75rem)] pb-2">
-        {/* Left: Branding */}
+        {/* Left: OMI Logo + Branding */}
         <div className="flex items-center gap-2 sm:gap-3 select-none pointer-events-none">
+          <Image src="/omi-logo.png" alt="OMI" width={24} height={24} className="rounded-md" />
           <span className="font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.15em] text-[var(--muted-foreground)] leading-tight">
-            GiftAI · Voice Shopping
+            OMI · Voice Shopping
           </span>
         </div>
 
         {/* Right: Controls */}
         <div className="flex items-center gap-1">
-          {/* Cart badge + controls (only when chat is active) */}
+          {/* Voice/Text toggle + Cart (only when chat is active) */}
           {isOrbMinimized && (
             <>
+              {/* Voice/Text mode toggle */}
               <button
-                onClick={() => setStoreSwapOpen(true)}
-                className="p-1.5 rounded-[var(--radius)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                title="Switch store"
+                onClick={() => {
+                  if (voice.voiceConnected) {
+                    voice.disconnectVoice()
+                  } else {
+                    voice.connectVoice()
+                  }
+                }}
+                className={cn(
+                  "p-1.5 rounded-[var(--radius)] transition-colors",
+                  voice.voiceConnected
+                    ? "bg-[var(--brand)]/10 text-[var(--brand)]"
+                    : "hover:bg-black/5 dark:hover:bg-white/5 text-[var(--muted-foreground)]"
+                )}
+                title={voice.voiceConnected ? "Switch to text mode" : "Switch to voice mode"}
               >
-                <ArrowRightLeft size={14} className="text-[var(--muted-foreground)]" />
+                {voice.voiceConnected ? <Mic size={14} /> : <MessageSquare size={14} />}
               </button>
+              {/* Mic mute (only when voice is connected) */}
+              {voice.voiceConnected && (
+                <button
+                  onClick={voice.toggleMic}
+                  className={cn(
+                    "p-1.5 rounded-[var(--radius)] transition-colors",
+                    voice.micEnabled
+                      ? "hover:bg-black/5 dark:hover:bg-white/5 text-[var(--foreground)]"
+                      : "bg-red-500/10 text-red-500"
+                  )}
+                  title={voice.micEnabled ? "Mute microphone" : "Unmute microphone"}
+                >
+                  {voice.micEnabled ? <Mic size={14} /> : <MicOff size={14} />}
+                </button>
+              )}
               <button
                 onClick={() => setCheckoutOpen(true)}
                 className="relative p-1.5 rounded-[var(--radius)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
@@ -466,7 +492,7 @@ function GiftAIApp({
           </AnimatePresence>
         </div>
 
-        {/* Headline + Subtext (orbdesign exact, GiftAI branding) */}
+        {/* Headline + Subtext (OMI branding) */}
         <div className="flex flex-col items-center text-center w-full mt-3 sm:mt-5 md:mt-6 space-y-1.5 sm:space-y-2.5 md:space-y-3">
           <h2 className={cn(
             "font-medium tracking-tight bg-clip-text text-transparent w-full text-center",
@@ -474,10 +500,10 @@ function GiftAIApp({
             "bg-gradient-to-br",
             "from-[var(--foreground)] via-[var(--foreground)]/70 to-[var(--foreground)]/50"
           )}>
-            GiftAI, your AI shopping assistant
+            OMI, your AI shopping homie
           </h2>
           <p className="font-normal text-[var(--muted-foreground)] tracking-tight w-full text-center text-[clamp(0.8125rem,2.5vw,1rem)]">
-            helps discover the right gifts for any occasion
+            helps discover unique gifts for any occasion
           </p>
         </div>
       </div>
@@ -605,12 +631,7 @@ function GiftAIApp({
         cartState={voice.cartState}
       />
 
-      <StoreSwapModal
-        isOpen={storeSwapOpen}
-        onClose={() => setStoreSwapOpen(false)}
-        onConnect={(creds) => { onStoreChange(creds); setStoreSwapOpen(false) }}
-        currentStore={storeCredentials.storeUrl}
-      />
+      {/* StoreSwapModal removed — defaulting to global mode */}
     </div>
   )
 }
@@ -705,7 +726,7 @@ function ConnectScreen({ onConnect }: { onConnect: (creds: StoreCredentials) => 
           <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-olive to-forest flex items-center justify-center shadow-lg shadow-olive/20">
             <span className="text-3xl">🎁</span>
           </div>
-          <h1 className="text-3xl font-bold text-[var(--foreground)]">GiftAI</h1>
+          <h1 className="text-3xl font-bold text-[var(--foreground)]">OMI</h1>
           <p className="text-[var(--muted-foreground)] mt-2">Voice-First Gift Shopping</p>
         </div>
         <div className="space-y-4 bg-[var(--card)] rounded-[var(--radius)] border border-[var(--border)] p-6 shadow-sm">

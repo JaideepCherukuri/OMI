@@ -115,7 +115,7 @@ export default function CheckoutModal({
                     Your cart is empty
                   </p>
                   <p className="text-sm text-[var(--muted-foreground)] max-w-[260px]">
-                    Start shopping by asking GiftAI for recommendations, then tap &quot;Add to Cart&quot; on any product.
+                    Start shopping by asking OMI for recommendations, then tap &quot;Add to Cart&quot; on any product.
                   </p>
                 </div>
                 <button
@@ -275,7 +275,7 @@ export default function CheckoutModal({
                 <div className="flex flex-col items-center gap-3 p-4 bg-[var(--muted)]/20 rounded-[var(--radius)]">
                   <PackageOpen size={24} className="text-[var(--muted-foreground)]" />
                   <p className="text-sm text-[var(--muted-foreground)] text-center">
-                    Checkout is being prepared. Ask GiftAI to proceed with checkout, or continue shopping.
+                    Checkout is being prepared. Ask OMI to proceed with checkout, or continue shopping.
                   </p>
                 </div>
               </div>
@@ -291,7 +291,7 @@ export default function CheckoutModal({
                     Your cart is empty
                   </p>
                   <p className="text-sm text-[var(--muted-foreground)] max-w-[260px]">
-                    Start shopping by asking GiftAI for recommendations, then tap &quot;Add to Cart&quot; on any product.
+                    Start shopping by asking OMI for recommendations, then tap &quot;Add to Cart&quot; on any product.
                   </p>
                 </div>
                 <button

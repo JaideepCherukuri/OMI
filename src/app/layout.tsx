@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'GiftAI — Voice-First Gift Shopping',
+  title: 'OMI — Your AI Shopping Homie',
   description: 'Find the perfect gift with AI-powered voice and text shopping',
 }
 
