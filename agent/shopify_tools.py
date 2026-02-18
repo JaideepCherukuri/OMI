@@ -427,11 +427,8 @@ class ShopifyTools:
 
         # Publish full product data to frontend via data channel
         if results:
-            # Build a text blurb that matches what the agent should say
-            blurb_parts = [f"Found {len(results)} products for \"{query}\":"]
-            for i, p in enumerate(results[:3], 1):
-                blurb_parts.append(f"• **{p['title']}** — {p['priceRange']}")
-            text_blurb = "\n".join(blurb_parts)
+            # Short text blurb — cards show the details visually
+            text_blurb = f"Found {len(results)} products for \"{query}\""
 
             await self._publish({
                 "type": "products_found",
@@ -461,7 +458,7 @@ class ShopifyTools:
         for i, p in enumerate(results[:6], 1):
             vendor = p.get('vendor', '')
             summaries.append(f"{i}. {p['title']} — {p['priceRange']}{f' from {vendor}' if vendor else ''}")
-        return f"Found {len(results)} products:\n" + "\n".join(summaries) + "\n\nDescribe the top 2-3 products with prices and what makes them special. Ask the user what interests them."
+        return f"Found {len(results)} products:\n" + "\n".join(summaries) + "\n\nKeep your response to 2 sentences max. The user can see the product cards — just say you found great options and ask what catches their eye."
 
     @llm.function_tool(description="Search products across ALL Shopify stores worldwide. Use for broad discovery when the user wants to explore beyond our store, e.g. 'find me the best matcha set' or 'show me birthday gifts under $50'.")
     async def search_global_products(
@@ -555,11 +552,8 @@ class ShopifyTools:
 
         self._last_search_results = products_for_frontend
 
-        # Build text blurb for the chat display
-        blurb_parts = [f"Found {len(products_for_frontend)} products across Shopify for \"{query}\":"]
-        for i, p in enumerate(products_for_frontend[:3], 1):
-            blurb_parts.append(f"• **{p['title']}** — {p['priceRange']} from {p['vendor']}")
-        text_blurb = "\n".join(blurb_parts)
+        # Short text blurb — cards show the details visually
+        text_blurb = f"Found {len(products_for_frontend)} products for \"{query}\""
 
         # Publish to frontend
         await self._publish({
@@ -588,7 +582,7 @@ class ShopifyTools:
         summaries = []
         for i, p in enumerate(products_for_frontend[:6], 1):
             summaries.append(f"{i}. {p['title']} — {p['priceRange']} from {p['vendor']}")
-        return f"Found {len(products_for_frontend)} products across Shopify:\n" + "\n".join(summaries) + "\n\nDescribe the top 2-3 products with specific prices, store names, and what makes each one special. Ask the user what catches their eye."
+        return f"Found {len(products_for_frontend)} products across Shopify:\n" + "\n".join(summaries) + "\n\nKeep your response to 2 sentences max. The user can see the product cards — just say you found great options and ask what catches their eye."
 
     @llm.function_tool(description="Add a product to the shopping cart by title. Optionally specify a variant.")
     async def add_to_cart(
