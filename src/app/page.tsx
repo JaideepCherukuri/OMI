@@ -170,6 +170,10 @@ function GiftAIApp({
     } catch {}
 
     if (mode === 'IDLE') {
+      // Same transition as first text message — orb fades into input bar
+      if (!isOrbMinimized) {
+        setIsOrbMinimized(true)
+      }
       startMic()
       // Also connect voice if disconnected
       if (voice.voiceState === 'disconnected') {
@@ -183,7 +187,7 @@ function GiftAIApp({
         voice.toggleMic()
       }
     }
-  }, [mode, startMic, stopAll, voice])
+  }, [mode, startMic, stopAll, voice, isOrbMinimized])
 
   // ── Submit handler — triggers isOrbMinimized via orbdesign pattern ──
   const handleSubmit = useCallback(async (value: string) => {
