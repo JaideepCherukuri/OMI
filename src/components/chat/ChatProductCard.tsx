@@ -13,7 +13,7 @@
 
 import { useState } from 'react'
 import type { ProductDetail, VariantDetail } from '@/types'
-import { ShoppingCart, Star } from 'lucide-react'
+import { Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ChatProductCardProps {
@@ -96,10 +96,9 @@ export default function ChatProductCard({
           </span>
         ) : null}
 
-        {/* Action buttons — gradient backdrop ensures visibility over any image (#9) */}
+        {/* Action button — single "Checkout now" CTA for all products */}
         <div className="absolute bottom-0 left-0 right-0 flex gap-1.5 px-2 pb-2 pt-8 bg-gradient-to-t from-black/50 to-transparent">
           {product.isGlobal && product.directCheckoutUrl ? (
-            /* #15: Global products — ONLY Shop Pay button */
             <a
               href={product.directCheckoutUrl}
               target="_blank"
@@ -110,27 +109,15 @@ export default function ChatProductCard({
               🛒 Checkout now
             </a>
           ) : (
-            <>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onBuyNow?.(product, defaultVariant)
-                }}
-                className="flex-1 py-1.5 bg-[var(--brand)] hover:opacity-90 text-white text-xs font-medium rounded-[var(--radius)] transition-all shadow-sm"
-              >
-                Buy now
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onAddToCart?.(product, defaultVariant)
-                }}
-                className="flex items-center gap-1 py-1.5 px-3 bg-[var(--card)] backdrop-blur-sm hover:brightness-95 text-[var(--card-foreground)] text-xs font-medium rounded-[var(--radius)] border border-[var(--border)] shadow-sm transition-colors"
-              >
-                <ShoppingCart size={12} />
-                <span>Add to cart</span>
-              </button>
-            </>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onBuyNow?.(product, defaultVariant)
+              }}
+              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] text-xs font-medium rounded-[var(--radius)] transition-all shadow-sm"
+            >
+              🛒 Checkout now
+            </button>
           )}
         </div>
       </div>

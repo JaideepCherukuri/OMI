@@ -46,7 +46,6 @@ import { cn } from '@/lib/utils'
 import { AnimatePresence } from 'framer-motion'
 import type { StoreCredentials, ProductDetail, VariantDetail } from '@/types'
 import { ShoppingBag, ChevronLeft, ChevronRight, MicOff } from 'lucide-react'
-import Image from 'next/image'
 
 export type SearchMode = 'global' | 'storefront'
 type Theme = 'light' | 'dark'
@@ -195,26 +194,31 @@ function GiftAIApp({
   const statusText = useMemo(() => {
     if (voice.voiceState === 'speaking') return 'Speaking...'
     if (voice.voiceState === 'thinking') return 'Thinking...'
-    if (voice.voiceState === 'listening' || mode === 'MIC') return 'Listening...'
+    // Don't show "Listening" when mic is muted
+    if ((voice.voiceState === 'listening' || mode === 'MIC') && voice.micEnabled) return 'Listening...'
     if (voice.voiceConnecting) return 'Connecting...'
     if (mode === 'SIM') return 'Processing...'
+    if (voice.voiceConnected && !voice.micEnabled) return 'Tap to start'
     return 'Tap to start'
-  }, [voice.voiceState, voice.voiceConnecting, mode])
+  }, [voice.voiceState, voice.voiceConnecting, voice.voiceConnected, voice.micEnabled, mode])
 
   // ── Active status message (above input bar) ──
   let activeStatusMessage: string | null = null
   if (voice.isTextLoading) {
-    activeStatusMessage = 'OMI is Thinking'
+    activeStatusMessage = 'Omi is Thinking'
   } else if (voice.voiceState === 'speaking') {
-    activeStatusMessage = 'OMI is Speaking'
+    activeStatusMessage = 'Omi is Speaking'
   } else if (voice.voiceState === 'thinking') {
-    activeStatusMessage = 'OMI is Thinking'
-  } else if (voice.voiceState === 'listening' || mode === 'MIC') {
-    activeStatusMessage = 'OMI is Listening'
+    activeStatusMessage = 'Omi is Thinking'
+  } else if ((voice.voiceState === 'listening' || mode === 'MIC') && voice.micEnabled) {
+    // Only show "Listening" when mic is actually enabled
+    activeStatusMessage = 'Omi is Listening'
   } else if (mode === 'SIM') {
-    activeStatusMessage = 'OMI is Processing'
+    activeStatusMessage = 'Omi is Processing'
+  } else if (isOrbMinimized && voice.voiceConnected && !voice.micEnabled) {
+    activeStatusMessage = null // No "Listening" status when mic is muted
   } else if (isOrbMinimized && voice.voiceConnected) {
-    activeStatusMessage = 'OMI is Ready'
+    activeStatusMessage = 'Omi is Ready'
   } else if (isOrbMinimized) {
     activeStatusMessage = null // No status in text-only mode when idle
   }
@@ -364,13 +368,8 @@ function GiftAIApp({
 
       {/* ── Top Bar (OMI branding + controls) ──────── */}
       <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between px-4 sm:px-5 md:px-6 pt-[max(env(safe-area-inset-top,0px),0.75rem)] pb-2">
-        {/* Left: OMI Logo + Branding */}
-        <div className="flex items-center gap-2 sm:gap-3 select-none pointer-events-none">
-          <Image src="/omi-logo.png" alt="OMI" width={24} height={24} className="rounded-md" />
-          <span className="font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.15em] text-[var(--muted-foreground)] leading-tight">
-            OMI · Voice Shopping
-          </span>
-        </div>
+        {/* Left: spacer (branding removed per Jai) */}
+        <div className="flex items-center gap-2 sm:gap-3 select-none pointer-events-none" />
 
         {/* Right: Controls */}
         <div className="flex items-center gap-1">
@@ -461,12 +460,8 @@ function GiftAIApp({
           </div>
         </div>
 
-        {/* Status Text (orbdesign exact) */}
-        <div className="mt-5 sm:mt-7 md:mt-9 min-h-[1.25rem] w-full flex justify-center">
-          <AnimatePresence mode="wait">
-            <ShiningText key={statusText} text={statusText} className="tracking-[0.2em] uppercase text-[9px] sm:text-[10px] md:text-xs font-normal" />
-          </AnimatePresence>
-        </div>
+        {/* Status text removed — already shows above the input bar */}
+        <div className="mt-5 sm:mt-7 md:mt-9 min-h-[1.25rem]" />
 
         {/* Headline + Subtext (OMI branding) */}
         <div className="flex flex-col items-center text-center w-full mt-3 sm:mt-5 md:mt-6 space-y-1.5 sm:space-y-2.5 md:space-y-3">
@@ -582,7 +577,7 @@ function GiftAIApp({
             micIcon={
               voice.voiceConnected && voice.micEnabled ? activeMicIcon :
               voice.voiceConnected && !voice.micEnabled ? (
-                <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-red-400 animate-pulse" />
+                <MicOff className="w-5 h-5 sm:w-6 sm:h-6 text-[var(--muted-foreground)] opacity-60" />
               ) :
               mode !== 'IDLE' ? activeMicIcon :
               undefined

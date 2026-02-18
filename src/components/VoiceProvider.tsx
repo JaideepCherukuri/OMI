@@ -331,19 +331,40 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       const type = event.type as string
 
       // Handle user transcription from Gemini (higher quality than LiveKit STT)
+      // Agent debounces these, but we also deduplicate on the frontend:
+      // replace the last voice-user message if it was recent (within 3s),
+      // otherwise create a new one.
       if (type === 'user_transcription') {
         const text = (event.text || '').trim()
         if (text) {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `voice-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              role: 'user',
-              content: text,
-              timestamp: Date.now(),
-              source: 'voice',
-            },
-          ])
+          setMessages((prev) => {
+            const lastMsg = prev[prev.length - 1]
+            const isRecentVoiceUser =
+              lastMsg &&
+              lastMsg.role === 'user' &&
+              lastMsg.source === 'voice' &&
+              Date.now() - lastMsg.timestamp < 3000
+
+            if (isRecentVoiceUser) {
+              // Replace the last voice-user message with updated text
+              return [
+                ...prev.slice(0, -1),
+                { ...lastMsg, content: text, timestamp: Date.now() },
+              ]
+            }
+
+            // New utterance
+            return [
+              ...prev,
+              {
+                id: `voice-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                role: 'user',
+                content: text,
+                timestamp: Date.now(),
+                source: 'voice',
+              },
+            ]
+          })
         }
         return
       }

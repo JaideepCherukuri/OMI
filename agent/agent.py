@@ -12,6 +12,7 @@ Based on LiveKit Agents SDK v1.4.x patterns (matching reference implementation).
 import logging
 import json
 import os
+import asyncio
 
 from dotenv import load_dotenv
 from livekit import agents
@@ -19,6 +20,7 @@ from livekit.agents import (
     Agent, AgentSession, JobContext, WorkerOptions, cli, room_io, llm
 )
 from livekit.plugins import google
+from google.genai import types as genai_types
 
 from shopify_tools import ShopifyTools
 from catalog_mcp import CatalogMCPClient, StorefrontMCPClient
@@ -38,8 +40,8 @@ CATALOG_CLIENT_ID = os.getenv("SHOPIFY_CATALOG_CLIENT_ID", "")
 CATALOG_CLIENT_SECRET = os.getenv("SHOPIFY_CATALOG_CLIENT_SECRET", "")
 
 # Agent personality / system prompt
-AGENT_INSTRUCTIONS = """You are OMI — a warm, friendly, and knowledgeable voice assistant
-for gift shopping.
+AGENT_INSTRUCTIONS = """You are Omi (pronounced "Oh-mee", one word, NOT spelled out as O-M-I) — a warm, friendly, and knowledgeable voice assistant
+for gift shopping. IMPORTANT: Always say your name as "Omi" (rhymes with "homie"), never spell it out letter by letter.
 
 YOU HAVE TWO SEARCH MODES:
 A) search_products — searches OUR connected Shopify store's catalog
@@ -65,6 +67,8 @@ RULES:
 
 PERSONALITY: Like a knowledgeable personal shopper — warm, helpful, not pushy. You have access
 to the entire Shopify ecosystem, so you can find ANYTHING.
+
+PRONUNCIATION: Your name is "Omi" (sounds like "Oh-mee"). NEVER say "O. M. I." or spell it out. Always say it as one smooth word: "Omi".
 """
 
 
@@ -97,12 +101,13 @@ async def entrypoint(ctx: JobContext):
 
     # Configure Gemini Realtime model with input audio transcription
     # input_audio_transcription enables Gemini to return what it heard (better than LiveKit STT)
+    # Uses google.genai.types.AudioTranscriptionConfig (NOT InputTranscriptionOptions which doesn't exist)
     model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
         voice="Puck",
         temperature=0.7,
         modalities=["AUDIO"],
-        input_audio_transcription=google.realtime.InputTranscriptionOptions(),
+        input_audio_transcription=genai_types.AudioTranscriptionConfig(),
     )
 
     # Create agent session with tools
@@ -125,25 +130,46 @@ async def entrypoint(ctx: JobContext):
 
     logger.info("Agent session started. Setting up transcription forwarding...")
 
-    # Forward user input transcriptions to frontend via data channel
-    # This gives much better quality than LiveKit's built-in STT
+    # Debounced user transcription forwarding.
+    # Gemini sends partial transcriptions as it processes audio (streaming).
+    # We debounce to only forward the final "settled" text after a 600ms pause,
+    # preventing spam of partial messages in the frontend chat.
+    _pending_transcription: dict = {"text": "", "task": None}
+
+    async def _send_transcription(text: str):
+        """Send the debounced transcription to the frontend."""
+        try:
+            ctx.room.local_participant.publish_data(
+                json.dumps({"type": "user_transcription", "text": text}).encode(),
+                reliable=True
+            )
+            logger.info(f"Forwarded final user transcription: {text[:80]}...")
+        except Exception as e:
+            logger.error(f"Failed to forward transcription: {e}")
+
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(event):
         text = getattr(event, 'transcript', '') or getattr(event, 'text', '') or str(event)
         text = text.strip()
-        if text and len(text) > 1:
-            try:
-                ctx.room.local_participant.publish_data(
-                    json.dumps({"type": "user_transcription", "text": text}).encode(),
-                    reliable=True
-                )
-                logger.info(f"Forwarded user transcription: {text[:50]}...")
-            except Exception as e:
-                logger.error(f"Failed to forward transcription: {e}")
+        if not text or len(text) <= 1:
+            return
+
+        # Cancel any pending send — a newer partial arrived
+        if _pending_transcription["task"] and not _pending_transcription["task"].done():
+            _pending_transcription["task"].cancel()
+
+        _pending_transcription["text"] = text
+
+        async def _debounced():
+            await asyncio.sleep(0.6)  # Wait 600ms for more partials
+            if _pending_transcription["text"] == text:
+                await _send_transcription(text)
+
+        _pending_transcription["task"] = asyncio.ensure_future(_debounced())
 
     # Generate initial greeting
     await session.generate_reply(
-        instructions="Greet the user warmly. Welcome them to OMI, the AI shopping assistant. "
+        instructions="Greet the user warmly. Welcome them to Omi (pronounced Oh-mee, NOT spelled out). "
                      "Ask what occasion they're shopping for. Keep it to 2 sentences max."
     )
 
