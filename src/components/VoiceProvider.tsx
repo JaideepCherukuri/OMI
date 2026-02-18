@@ -136,12 +136,25 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const roomRef = useRef<any>(null)
 
-  // ── Connect voice (sends conversation context for continuity) ──
+  // ── Connect voice (sends conversation context via participant metadata) ──
   const connectVoice = useCallback(async () => {
     try {
       setVoiceState('connecting')
-      const url = roomName ? `/api/token?room=${roomName}` : '/api/token'
-      const resp = await fetch(url, { cache: 'no-store' })
+
+      // Build conversation context from text history
+      const contextMessages = messages.slice(-8).map(m => `${m.role}: ${m.content}`)
+      const context = contextMessages.length > 0 ? contextMessages.join('\n') : undefined
+
+      // POST to token API with context embedded in participant metadata
+      const resp = await fetch('/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room: roomName || undefined,
+          context,
+        }),
+        cache: 'no-store',
+      })
       if (!resp.ok) throw new Error(`Token fetch failed: ${resp.statusText}`)
 
       const data = await resp.json()
@@ -149,21 +162,6 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       setServerUrl(data.serverUrl)
       setRoomName(data.roomName)
       setShouldConnect(true)
-
-      // Send conversation context to voice agent after short delay (allow connection)
-      setTimeout(() => {
-        if (roomRef.current && messages.length > 0) {
-          try {
-            const context = messages.slice(-8).map(m => `${m.role}: ${m.content}`).join('\n')
-            const payload = new TextEncoder().encode(
-              JSON.stringify({ type: 'text_message', content: `[Context from text chat — continue this conversation]\n${context}\n\nThe user has switched to voice mode. Continue helping them with the same context.` })
-            )
-            roomRef.current.localParticipant.publishData(payload, { reliable: true })
-          } catch (e) {
-            console.warn('Failed to send context to voice agent:', e)
-          }
-        }
-      }, 3000)
     } catch (err) {
       console.error('Voice connect failed:', err)
       setVoiceState('disconnected')

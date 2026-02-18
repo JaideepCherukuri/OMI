@@ -6,17 +6,24 @@ Architecture:
                                 ←→ Shopify APIs (search, cart, checkout)
                 ←→ Frontend via Data Channel (product cards, cart state)
 
-Based on LiveKit Agents SDK v1.4.x patterns (matching reference implementation).
+User Transcription:
+  Parallel Google Cloud STT runs alongside Gemini for real-time streaming.
+  Gemini processes audio natively for understanding; STT provides live text.
+
+Context Continuity:
+  Frontend sends conversation history via participant metadata in the token.
+  Agent reads metadata before greeting, ensuring seamless text→voice transition.
+
+Based on LiveKit Agents SDK v1.4.x.
 """
 
 import logging
 import json
 import os
 import asyncio
-import uuid
 
 from dotenv import load_dotenv
-from livekit import agents
+from livekit import agents, rtc
 from livekit.agents import (
     Agent, AgentSession, JobContext, WorkerOptions, cli, room_io, llm
 )
@@ -39,6 +46,9 @@ ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 # Catalog MCP config (global search across all Shopify merchants)
 CATALOG_CLIENT_ID = os.getenv("SHOPIFY_CATALOG_CLIENT_ID", "")
 CATALOG_CLIENT_SECRET = os.getenv("SHOPIFY_CATALOG_CLIENT_SECRET", "")
+
+# GCP credentials for Cloud Speech STT
+GCP_CREDENTIALS_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/app/gcp-key.json")
 
 # Agent personality / system prompt
 AGENT_INSTRUCTIONS = """You are Omi (pronounced "Oh-mee", one word, NOT spelled out as O-M-I) — a warm, friendly, and knowledgeable voice shopping assistant.
@@ -74,11 +84,19 @@ RULES:
 9. Ask follow-up questions to narrow down: occasion, recipient, budget, style preferences.
 10. When you recommend products, always mention specific names and prices from the search results.
 
-PERSONALITY: Like a knowledgeable personal shopper at a high-end store — warm, helpful, not pushy. You have access
-to the entire Shopify ecosystem, so you can find ANYTHING. Be confident and specific in your recommendations.
+PERSONALITY: Like a knowledgeable personal shopper at a high-end store — warm, helpful, not pushy.
 
-PRONUNCIATION: Your name is "Omi" (sounds like "Oh-mee"). NEVER say "O. M. I." or spell it out. Always say it as one smooth word: "Omi".
+PRONUNCIATION: Your name is "Omi" (sounds like "Oh-mee"). NEVER say "O. M. I." or spell it out.
 """
+
+
+async def _publish_data(room: rtc.Room, data: dict) -> None:
+    """Publish data to the LiveKit data channel. MUST be awaited."""
+    try:
+        payload = json.dumps(data).encode()
+        await room.local_participant.publish_data(payload, reliable=True)
+    except Exception as e:
+        logger.error(f"Data channel publish failed: {e}")
 
 
 async def entrypoint(ctx: JobContext):
@@ -92,8 +110,6 @@ async def entrypoint(ctx: JobContext):
     if CATALOG_CLIENT_ID and CATALOG_CLIENT_SECRET:
         catalog_client = CatalogMCPClient(CATALOG_CLIENT_ID, CATALOG_CLIENT_SECRET)
         logger.info("Catalog MCP enabled — global product search active")
-    else:
-        logger.info("Catalog MCP not configured — using store-only search")
 
     # Initialize Storefront MCP client (single store, no auth)
     storefront_mcp = StorefrontMCPClient(STORE_URL)
@@ -108,10 +124,10 @@ async def entrypoint(ctx: JobContext):
     )
     tools = llm.find_function_tools(shopify)
 
-    # Configure Gemini Realtime model with input + output audio transcription
-    # input_audio_transcription: Gemini returns what it heard (user speech → text)
-    # output_audio_transcription: Gemini returns what it said (agent speech → text)
-    model = google.realtime.RealtimeModel(
+    # ── Configure models ──
+
+    # 1. Gemini Realtime (native audio understanding + response)
+    gemini_model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
         voice="Puck",
         temperature=0.7,
@@ -120,11 +136,86 @@ async def entrypoint(ctx: JobContext):
         output_audio_transcription=genai_types.AudioTranscriptionConfig(),
     )
 
-    # Create agent session with tools
-    session = AgentSession(
-        llm=model,
-        tools=tools,
-    )
+    # 2. Google Cloud STT (parallel real-time transcription of user speech)
+    #    Runs alongside Gemini — STT provides live text for the UI,
+    #    while Gemini handles actual understanding and responses.
+    #    On Cloud Run, uses Application Default Credentials (service account).
+    #    Locally, uses gcp-key.json if present.
+    parallel_stt = None
+    try:
+        stt_kwargs = {
+            "languages": "en-US",
+            "interim_results": True,
+            "model": "latest_long",
+        }
+        # Use explicit credentials file if available, otherwise fall back to ADC
+        if os.path.exists(GCP_CREDENTIALS_FILE):
+            stt_kwargs["credentials_file"] = GCP_CREDENTIALS_FILE
+            logger.info(f"Google Cloud STT: using credentials from {GCP_CREDENTIALS_FILE}")
+        else:
+            logger.info("Google Cloud STT: using Application Default Credentials")
+        parallel_stt = google.STT(**stt_kwargs)
+        logger.info("Google Cloud STT enabled for real-time user transcription")
+    except Exception as e:
+        logger.warning(f"Google Cloud STT not available, falling back to Gemini transcription only: {e}")
+
+    # ── Wait for user participant to check for conversation context ──
+    conversation_context = ""
+
+    # Check existing participants
+    for participant in ctx.room.remote_participants.values():
+        meta = participant.metadata
+        if meta:
+            try:
+                meta_data = json.loads(meta)
+                conversation_context = meta_data.get("conversationContext", "")
+                if conversation_context:
+                    logger.info(f"Found conversation context from participant {participant.identity}: {conversation_context[:100]}...")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    # Also listen for new participants joining with context
+    context_received = asyncio.Event()
+
+    def on_participant_connected(participant: rtc.RemoteParticipant):
+        nonlocal conversation_context
+        meta = participant.metadata
+        if meta:
+            try:
+                meta_data = json.loads(meta)
+                ctx_text = meta_data.get("conversationContext", "")
+                if ctx_text:
+                    conversation_context = ctx_text
+                    logger.info(f"Received conversation context from {participant.identity}")
+                    context_received.set()
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    def on_participant_metadata_changed(participant: rtc.Participant, old_metadata: str | None, new_metadata: str | None):
+        nonlocal conversation_context
+        if new_metadata:
+            try:
+                meta_data = json.loads(new_metadata)
+                ctx_text = meta_data.get("conversationContext", "")
+                if ctx_text:
+                    conversation_context = ctx_text
+                    logger.info(f"Received updated context from {participant.identity}")
+                    context_received.set()
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    ctx.room.on("participant_connected", on_participant_connected)
+    ctx.room.on("participant_metadata_changed", on_participant_metadata_changed)
+
+    # ── Create agent session ──
+    session_kwargs = {
+        "llm": gemini_model,
+        "tools": tools,
+    }
+    if parallel_stt:
+        session_kwargs["stt"] = parallel_stt
+
+    session = AgentSession(**session_kwargs)
 
     # Room options — keep agent alive across page refreshes
     room_opts = room_io.RoomOptions(
@@ -137,108 +228,104 @@ async def entrypoint(ctx: JobContext):
         agent=Agent(instructions=AGENT_INSTRUCTIONS),
         room_options=room_opts,
     )
+    logger.info("Agent session started.")
 
-    logger.info("Agent session started. Setting up transcription forwarding...")
-
-    # ── User transcription streaming ──
-    # Forward user input transcriptions to frontend via data channel.
-    # Streams partial text in real-time so the user sees their speech appear.
-    _current_utterance_id: str = ""
-    _utterance_text: str = ""
+    # ── Forward user transcriptions to frontend ──
+    # The SDK emits `user_input_transcribed` events from either:
+    #   - Parallel STT (real-time partials during speech)
+    #   - Gemini input_audio_transcription (after processing)
+    # We forward these to the frontend via the data channel.
 
     @session.on("user_input_transcribed")
-    def on_user_input_transcribed(event):
-        nonlocal _current_utterance_id, _utterance_text
-
-        text = getattr(event, 'transcript', '') or getattr(event, 'text', '') or str(event)
-        text = text.strip()
-        if not text or len(text) <= 1:
+    async def on_user_transcribed(ev):
+        transcript = ev.transcript.strip() if ev.transcript else ""
+        if not transcript:
             return
 
-        # If this is longer than previous, it's a continuation of same utterance
-        # If shorter (new sentence), start a new utterance
-        if len(text) < len(_utterance_text) * 0.5 and len(_utterance_text) > 10:
-            # New utterance — finalize the old one and start fresh
-            if _utterance_text:
-                _publish_sync(ctx.room, {
-                    "type": "user_transcription",
-                    "text": _utterance_text,
-                    "utteranceId": _current_utterance_id,
-                    "isFinal": True,
-                })
-            _current_utterance_id = str(uuid.uuid4())[:8]
-            _utterance_text = text
-        else:
-            # Continuation of same utterance
-            if not _current_utterance_id:
-                _current_utterance_id = str(uuid.uuid4())[:8]
-            _utterance_text = text
-
-        # Send partial
-        _publish_sync(ctx.room, {
+        logger.info(f"User transcription (final={ev.is_final}): {transcript[:80]}...")
+        await _publish_data(ctx.room, {
             "type": "user_transcription",
-            "text": text,
-            "utteranceId": _current_utterance_id,
-            "isFinal": False,
+            "text": transcript,
+            "isFinal": ev.is_final,
         })
-        logger.info(f"User transcription [{_current_utterance_id}]: {text[:60]}...")
 
-    # Finalize user utterance when agent starts responding
-    @session.on("agent_started_speaking")
-    def on_agent_speaking(event=None):
-        nonlocal _current_utterance_id, _utterance_text
-        if _utterance_text and _current_utterance_id:
-            _publish_sync(ctx.room, {
-                "type": "user_transcription",
-                "text": _utterance_text,
-                "utteranceId": _current_utterance_id,
-                "isFinal": True,
-            })
-            logger.info(f"Finalized user transcription: {_utterance_text[:60]}...")
-        _current_utterance_id = ""
-        _utterance_text = ""
+    # ── Forward agent speech transcription to frontend ──
+    @session.on("conversation_item_added")
+    async def on_conversation_item(ev):
+        try:
+            item = ev.item
+            if hasattr(item, 'role') and item.role == "assistant":
+                # Get text content from the message
+                content = ""
+                if hasattr(item, 'content') and item.content:
+                    for part in item.content:
+                        if isinstance(part, str):
+                            content += part
+                        elif hasattr(part, 'text'):
+                            content += part.text
+                if content:
+                    await _publish_data(ctx.room, {
+                        "type": "agent_transcription",
+                        "text": content.strip(),
+                        "isFinal": True,
+                    })
+        except Exception as e:
+            logger.error(f"Error forwarding agent transcription: {e}")
 
-    # ── Agent transcription streaming ──
-    # Forward agent's spoken text to frontend in real-time
-    _agent_speech_text: str = ""
+    # ── Wait briefly for context, then send greeting ──
+    # If user comes from text mode, context arrives via participant metadata.
+    # If fresh session, no context — give standard greeting.
+    if not conversation_context:
+        # Wait up to 2s for context to arrive (user might still be connecting)
+        try:
+            await asyncio.wait_for(context_received.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            pass
 
-    @session.on("agent_speech_transcribed")
-    def on_agent_speech_transcribed(event):
-        nonlocal _agent_speech_text
-        text = getattr(event, 'transcript', '') or getattr(event, 'text', '') or ''
-        text = text.strip()
-        if not text:
-            return
+    # Also check for context from data channel (backward compat)
+    data_context_received = asyncio.Event()
+    data_context_text = ""
 
-        _agent_speech_text = text
-        _publish_sync(ctx.room, {
-            "type": "agent_transcription",
-            "text": text,
-            "isFinal": False,
-        })
-        logger.info(f"Agent speech (partial): {text[:60]}...")
+    @ctx.room.on("data_received")
+    def on_initial_data(data: bytes, participant, kind):
+        nonlocal data_context_text
+        try:
+            event = json.loads(data.decode())
+            if event.get("type") == "text_message" and "[Context from text chat" in event.get("content", ""):
+                data_context_text = event.get("content", "")
+                data_context_received.set()
+        except Exception:
+            pass
 
-    @session.on("agent_stopped_speaking")
-    def on_agent_stopped(event=None):
-        nonlocal _agent_speech_text
-        if _agent_speech_text:
-            _publish_sync(ctx.room, {
-                "type": "agent_transcription",
-                "text": _agent_speech_text,
-                "isFinal": True,
-            })
-            logger.info(f"Agent speech (final): {_agent_speech_text[:60]}...")
-            _agent_speech_text = ""
+    if not conversation_context:
+        try:
+            await asyncio.wait_for(data_context_received.wait(), timeout=2.0)
+            if data_context_text:
+                conversation_context = data_context_text
+        except asyncio.TimeoutError:
+            pass
 
-    # Generate initial greeting
-    await session.generate_reply(
-        instructions="Greet the user warmly. Welcome them to Omi (pronounced Oh-mee, NOT spelled out). "
-                     "Ask what occasion they're shopping for. Keep it to 2 sentences max."
-    )
+    # Generate context-aware greeting
+    if conversation_context:
+        logger.info(f"Generating context-aware greeting with: {conversation_context[:100]}...")
+        await session.generate_reply(
+            instructions=(
+                f"The user was previously chatting via text. Here's their conversation so far:\n\n"
+                f"{conversation_context}\n\n"
+                f"They've now switched to voice mode. Continue the conversation naturally — "
+                f"acknowledge what they were discussing and offer to help further. "
+                f"Keep it to 1-2 sentences. Don't re-introduce yourself if they already know you."
+            )
+        )
+    else:
+        await session.generate_reply(
+            instructions="Greet the user warmly. Welcome them to Omi (pronounced Oh-mee). "
+                         "Ask what occasion they're shopping for. Keep it to 2 sentences max."
+        )
 
     logger.info("Greeting complete. Agent is active.")
 
-    # Handle data channel messages from frontend (text input, UI actions)
+    # ── Handle ongoing data channel messages from frontend ──
     @ctx.room.on("data_received")
     def on_data(data: bytes, participant, kind):
         try:
@@ -247,11 +334,11 @@ async def entrypoint(ctx: JobContext):
 
             if event_type == "text_message":
                 content = event.get("content", "").strip()
-                if content:
+                # Skip context messages (already handled above)
+                if content and "[Context from text chat" not in content:
                     logger.info(f"Text from frontend: {content}")
                     session.generate_reply(
-                        instructions=f"The user typed this message (they're using text input alongside voice): \"{content}\". "
-                                     "Respond naturally as if they spoke it. Use your tools if needed."
+                        instructions=f'The user typed: "{content}". Respond naturally. Use tools if needed.'
                     )
 
             elif event_type == "user_action":
@@ -259,43 +346,23 @@ async def entrypoint(ctx: JobContext):
                 if action == "add_to_cart":
                     product_title = event.get("productTitle", "")
                     variant = event.get("variantTitle", "")
-                    logger.info(f"UI action: add_to_cart '{product_title}' variant '{variant}'")
                     session.generate_reply(
-                        instructions=f"The user clicked 'Add to Cart' on the product '{product_title}'"
-                                     f"{f' variant {variant}' if variant else ''}. "
-                                     "Call the add_to_cart tool to add it, then confirm."
+                        instructions=f"Add '{product_title}'{f' variant {variant}' if variant else ''} to cart."
                     )
                 elif action == "checkout":
-                    logger.info("UI action: checkout")
-                    session.generate_reply(
-                        instructions="The user clicked checkout. Call the checkout tool and guide them."
-                    )
+                    session.generate_reply(instructions="User wants to checkout. Call checkout tool.")
                 elif action == "view_cart":
-                    logger.info("UI action: view_cart")
-                    session.generate_reply(
-                        instructions="The user wants to see their cart. Call view_cart and describe the contents."
-                    )
+                    session.generate_reply(instructions="User wants to see cart. Call view_cart tool.")
                 elif action == "view_details":
                     product_title = event.get("productTitle", "")
-                    logger.info(f"UI action: view_details '{product_title}'")
                     session.generate_reply(
-                        instructions=f"The user clicked on '{product_title}' to see details. "
-                                     "Call get_product_details and describe it enthusiastically."
+                        instructions=f"Describe '{product_title}' with details from get_product_details."
                     )
 
         except Exception as e:
             logger.error(f"Data channel handler error: {e}")
 
-    logger.info("Session configured with close_on_disconnect=False — agent persists across refreshes")
-
-
-def _publish_sync(room, data: dict):
-    """Synchronously publish data to the LiveKit data channel."""
-    try:
-        payload = json.dumps(data).encode()
-        room.local_participant.publish_data(payload, reliable=True)
-    except Exception as e:
-        logger.error(f"Data channel publish failed: {e}")
+    logger.info("Session fully configured. Agent persists across refreshes.")
 
 
 async def accept_all_jobs(req):
