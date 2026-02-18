@@ -127,12 +127,14 @@ async def entrypoint(ctx: JobContext):
     # ── Configure models ──
 
     # 1. Gemini Realtime (native audio understanding + response)
+    #    Only output_audio_transcription is enabled (for agent speech text).
+    #    User transcription comes from the parallel STT instead — it's faster
+    #    and doesn't duplicate with Gemini's delayed input transcription.
     gemini_model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
         voice="Puck",
         temperature=0.7,
         modalities=["AUDIO"],
-        input_audio_transcription=genai_types.AudioTranscriptionConfig(),
         output_audio_transcription=genai_types.AudioTranscriptionConfig(),
     )
 
@@ -145,6 +147,7 @@ async def entrypoint(ctx: JobContext):
     try:
         stt_kwargs = {
             "languages": "en-US",
+            "detect_language": False,  # Force English only — prevents Arabic/other misdetection
             "interim_results": True,
             "model": "latest_long",
         }
@@ -231,10 +234,9 @@ async def entrypoint(ctx: JobContext):
     logger.info("Agent session started.")
 
     # ── Forward user transcriptions to frontend ──
-    # The SDK emits `user_input_transcribed` events from either:
-    #   - Parallel STT (real-time partials during speech)
-    #   - Gemini input_audio_transcription (after processing)
-    # We forward these to the frontend via the data channel.
+    # With parallel STT enabled and Gemini input_audio_transcription disabled,
+    # user_input_transcribed events come ONLY from Google Cloud STT.
+    # This gives real-time English-only partials without duplicates.
 
     # NOTE: LiveKit event emitter requires SYNC callbacks.
     # Use asyncio.create_task() for async work inside handlers.
@@ -252,27 +254,9 @@ async def entrypoint(ctx: JobContext):
             "isFinal": ev.is_final,
         }))
 
-    # ── Forward agent speech transcription to frontend ──
-    @session.on("conversation_item_added")
-    def on_conversation_item(ev):
-        try:
-            item = ev.item
-            if hasattr(item, 'role') and item.role == "assistant":
-                content = ""
-                if hasattr(item, 'content') and item.content:
-                    for part in item.content:
-                        if isinstance(part, str):
-                            content += part
-                        elif hasattr(part, 'text'):
-                            content += part.text
-                if content:
-                    asyncio.create_task(_publish_data(ctx.room, {
-                        "type": "agent_transcription",
-                        "text": content.strip(),
-                        "isFinal": True,
-                    }))
-        except Exception as e:
-            logger.error(f"Error forwarding agent transcription: {e}")
+    # Agent speech text is handled by LiveKit's TranscriptionReceived on the frontend,
+    # sourced from Gemini's output_audio_transcription. No need for a data channel handler
+    # — that was causing duplicate assistant messages.
 
     # ── Wait briefly for context, then send greeting ──
     # If user comes from text mode, context arrives via participant metadata.
