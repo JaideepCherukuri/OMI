@@ -43,6 +43,12 @@ import type {
 // Context Types
 // ═══════════════════════════════════════════
 
+interface SuggestionChip {
+  label: string
+  text: string
+  url?: string
+}
+
 interface VoiceContextValue {
   // Voice state
   voiceState: VoiceState
@@ -55,6 +61,9 @@ interface VoiceContextValue {
   cartState: CartState | null
   stageContent: StageContent
   highlightedProductId: number | null
+
+  // Dynamic suggestions from agent
+  agentSuggestions: SuggestionChip[]
 
   // Actions
   connectVoice: () => Promise<void>
@@ -112,6 +121,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   const [stageContent, setStageContent] = useState<StageContent>('welcome')
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null)
   const [isTextLoading, setIsTextLoading] = useState(false)
+  const [agentSuggestions, setAgentSuggestions] = useState<SuggestionChip[]>([])
 
   // ── MCP session ID (persists across requests for cart continuity) ──
   const [mcpSessionId, setMcpSessionId] = useState<string>(
@@ -165,7 +175,6 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     setShouldConnect(false)
     setToken('')
     setVoiceState('disconnected')
-    // Don't clear roomName — allows reconnecting to same session
   }, [])
 
   // ── Text message: /api/chat (works in BOTH modes) ──
@@ -239,12 +248,8 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   )
 
   // ── Send text message — ALWAYS uses /api/chat for immediate response ──
-  // This ensures text works seamlessly whether voice is connected or not.
-  // Voice agent runs in parallel for audio-based interactions.
-  // Both share the same `messages` state for context continuity.
   const sendTextMessage = useCallback(
     async (text: string) => {
-      // Always add user message to state
       setMessages((prev) => [
         ...prev,
         {
@@ -255,8 +260,6 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
           source: 'text',
         },
       ])
-
-      // Always use text API — gives immediate response with product cards
       await sendViaTextApi(text)
     },
     [sendViaTextApi],
@@ -284,13 +287,11 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       const pub = roomRef.current.localParticipant.getTrackPublication(Track.Source.Microphone)
       if (pub?.track) {
         if (micEnabled) {
-          // Mute: stop the track AND disable the MediaStreamTrack
           pub.mute()
           if (pub.track.mediaStreamTrack) {
             pub.track.mediaStreamTrack.enabled = false
           }
         } else {
-          // Unmute: restart the track AND enable the MediaStreamTrack
           pub.unmute()
           if (pub.track.mediaStreamTrack) {
             pub.track.mediaStreamTrack.enabled = true
@@ -322,6 +323,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     setCartState(null)
     setStageContent('welcome')
     setHighlightedProductId(null)
+    setAgentSuggestions([])
   }, [])
 
   // ── Data channel handler (called from VoiceBridge) ──
@@ -330,66 +332,134 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       const event = JSON.parse(new TextDecoder().decode(payload))
       const type = event.type as string
 
-      // Handle user transcription from Gemini (higher quality than LiveKit STT)
-      // Agent debounces these, but we also deduplicate on the frontend:
-      // replace the last voice-user message if it was recent (within 3s),
-      // otherwise create a new one.
+      // ── User transcription (from Gemini's STT via agent) ──
+      // Agent sends streaming partials. We update the current user message in-place.
       if (type === 'user_transcription') {
         const text = (event.text || '').trim()
-        if (text) {
-          setMessages((prev) => {
-            const lastMsg = prev[prev.length - 1]
-            const isRecentVoiceUser =
-              lastMsg &&
-              lastMsg.role === 'user' &&
-              lastMsg.source === 'voice' &&
-              Date.now() - lastMsg.timestamp < 3000
+        const utteranceId = event.utteranceId || null
+        const isFinal = event.isFinal !== false  // default true for backward compat
 
-            if (isRecentVoiceUser) {
-              // Replace the last voice-user message with updated text
-              return [
-                ...prev.slice(0, -1),
-                { ...lastMsg, content: text, timestamp: Date.now() },
-              ]
+        if (!text) return
+
+        setMessages((prev) => {
+          // Find existing streaming user message with same utteranceId, or recent voice-user
+          const existingIdx = prev.findIndex(
+            (m) => m.role === 'user' && m.source === 'voice' && m.streaming &&
+                   (utteranceId ? m.id === `voice-user-${utteranceId}` : Date.now() - m.timestamp < 4000)
+          )
+
+          if (existingIdx >= 0) {
+            // Update existing streaming message
+            const updated = [...prev]
+            updated[existingIdx] = {
+              ...updated[existingIdx],
+              content: text,
+              timestamp: Date.now(),
+              streaming: !isFinal,
             }
+            return updated
+          }
 
-            // New utterance
-            return [
-              ...prev,
-              {
-                id: `voice-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                role: 'user',
-                content: text,
-                timestamp: Date.now(),
-                source: 'voice',
-              },
-            ]
-          })
+          // Create new streaming user message
+          return [
+            ...prev,
+            {
+              id: utteranceId ? `voice-user-${utteranceId}` : `voice-user-${Date.now()}`,
+              role: 'user',
+              content: text,
+              timestamp: Date.now(),
+              source: 'voice',
+              streaming: !isFinal,
+            },
+          ]
+        })
+        return
+      }
+
+      // ── Agent speech transcription (what the agent is saying, streamed) ──
+      if (type === 'agent_transcription') {
+        const text = (event.text || '').trim()
+        const isFinal = event.isFinal === true
+
+        if (!text) return
+
+        setMessages((prev) => {
+          // Find the last streaming assistant voice message
+          const lastIdx = prev.length - 1
+          const lastMsg = prev[lastIdx]
+          const isStreamingAssistant =
+            lastMsg &&
+            lastMsg.role === 'assistant' &&
+            lastMsg.source === 'voice' &&
+            lastMsg.streaming
+
+          if (isStreamingAssistant) {
+            const updated = [...prev]
+            updated[lastIdx] = {
+              ...updated[lastIdx],
+              content: text,
+              timestamp: Date.now(),
+              streaming: !isFinal,
+            }
+            return updated
+          }
+
+          // Create new streaming assistant message
+          return [
+            ...prev,
+            {
+              id: `voice-assistant-${Date.now()}`,
+              role: 'assistant',
+              content: text,
+              timestamp: Date.now(),
+              source: 'voice',
+              streaming: !isFinal,
+            },
+          ]
+        })
+        return
+      }
+
+      // ── Dynamic suggestion chips from agent ──
+      if (type === 'suggestions') {
+        const chips = (event.suggestions || []) as SuggestionChip[]
+        if (chips.length > 0) {
+          setAgentSuggestions(chips)
         }
         return
       }
 
       if (type === 'products_found') {
-        // Ensure voice products match text mode card format (isGlobal + directCheckoutUrl)
-        const prods = (event.products as ProductDetail[]).map(p => ({
+        // Map agent's underscore-prefixed fields to frontend ProductDetail format
+        const prods = (event.products as any[]).map((p: any) => ({
           ...p,
           isGlobal: p.isGlobal ?? true,
-          directCheckoutUrl: p.directCheckoutUrl || p.shopUrl || '',
-        }))
+          directCheckoutUrl: p.directCheckoutUrl || p._checkoutUrl || p.shopUrl || '',
+          shopName: p.shopName || p._shopName || p.vendor || '',
+        })) as ProductDetail[]
         setProducts(prods)
         setStageContent('products')
         const query = event.query || 'your request'
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `voice-${Date.now()}`,
-            role: 'assistant',
-            content: `Found ${prods.length} products for "${query}"`,
-            timestamp: Date.now(),
-            products: prods,
-            source: 'voice',
-          },
-        ])
+
+        // Create assistant message with products. Use text_blurb from agent if available.
+        const blurb = event.text_blurb || `Found ${prods.length} products for "${query}"`
+        setMessages((prev) => {
+          // If the last message is a streaming assistant message, finalize it first
+          const updated = prev.map(m =>
+            m.streaming && m.role === 'assistant' ? { ...m, streaming: false } : m
+          )
+          return [
+            ...updated,
+            {
+              id: `voice-products-${Date.now()}`,
+              role: 'assistant',
+              content: blurb,
+              timestamp: Date.now(),
+              products: prods,
+              source: 'voice',
+            },
+          ]
+        })
       } else if (type === 'cart_updated') {
         const cart = event.cart as CartState
         setCartState(cart)
@@ -429,18 +499,56 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     }
   }, [])
 
-  // ── Handle voice transcriptions (streamed to chat) ──
-  const handleTranscription = useCallback((text: string, role: 'user' | 'assistant') => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `voice-${role}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        role,
-        content: text,
-        timestamp: Date.now(),
-        source: 'voice',
-      },
-    ])
+  // ── Handle assistant voice transcriptions from LiveKit ──
+  // This captures the agent's spoken words and streams them into chat.
+  const handleTranscription = useCallback((
+    segments: Array<{ id: string; text: string; final: boolean }>,
+    isFinal: boolean,
+  ) => {
+    const text = segments.map(s => s.text).join(' ').trim()
+    if (!text) return
+
+    setMessages((prev) => {
+      // Find the last streaming assistant voice message
+      const lastIdx = prev.length - 1
+      const lastMsg = prev[lastIdx]
+      const isStreamingAssistant =
+        lastMsg &&
+        lastMsg.role === 'assistant' &&
+        lastMsg.source === 'voice' &&
+        lastMsg.streaming
+
+      if (isStreamingAssistant) {
+        // Update existing streaming message
+        const updated = [...prev]
+        updated[lastIdx] = {
+          ...updated[lastIdx],
+          content: text,
+          streaming: !isFinal,
+        }
+        return updated
+      }
+
+      // Don't create duplicate if this text matches a recent non-streaming message
+      const recentMatch = prev.slice(-3).find(
+        m => m.role === 'assistant' && m.source === 'voice' &&
+             (m.content === text || text.startsWith(m.content) || m.content.startsWith(text))
+      )
+      if (recentMatch && !recentMatch.streaming) return prev
+
+      // Create new streaming assistant message
+      return [
+        ...prev,
+        {
+          id: `voice-assistant-${Date.now()}`,
+          role: 'assistant',
+          content: text,
+          timestamp: Date.now(),
+          source: 'voice',
+          streaming: !isFinal,
+        },
+      ]
+    })
   }, [])
 
   // ── Build context value ────────────────────
@@ -457,6 +565,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       cartState,
       stageContent,
       highlightedProductId,
+      agentSuggestions,
       connectVoice,
       disconnectVoice,
       sendTextMessage,
@@ -473,6 +582,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     [
       voiceState, voiceConnected, voiceConnecting,
       messages, products, cartState, stageContent, highlightedProductId,
+      agentSuggestions,
       connectVoice, disconnectVoice, sendTextMessage, sendUiAction,
       clearChat, setStageContent,
       micEnabled, speakerEnabled, toggleMic, toggleSpeaker,
@@ -482,7 +592,6 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
 
   // ── Render ─────────────────────────────────
   if (!shouldConnect || !token || !serverUrl) {
-    // Text-only mode — same context, same state, just no LiveKit
     return (
       <VoiceContext.Provider value={value}>
         {children}
@@ -490,7 +599,6 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     )
   }
 
-  // Voice mode — wrap in LiveKitRoom + bridge
   return (
     <VoiceContext.Provider value={value}>
       <LiveKitRoom
@@ -517,7 +625,6 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
 
 // ═══════════════════════════════════════════
 // VoiceBridge — syncs LiveKit state to parent
-// No children — just hooks + effects
 // ═══════════════════════════════════════════
 
 function VoiceBridge({
@@ -529,21 +636,22 @@ function VoiceBridge({
   roomRef: React.MutableRefObject<any>
   setVoiceState: (state: VoiceState) => void
   onAgentData: (payload: Uint8Array) => void
-  onTranscription: (text: string, role: 'user' | 'assistant') => void
+  onTranscription: (
+    segments: Array<{ id: string; text: string; final: boolean }>,
+    isFinal: boolean,
+  ) => void
 }) {
   const room = useRoomContext()
   const { state: agentState } = useVoiceAssistant()
   const connectionState = useConnectionState()
 
-  // ── Track seen transcription segment IDs to avoid duplicates ──
-  const seenSegmentIds = useRef(new Set<string>())
+  // ── Accumulate text for current speech turn ──
+  const currentTurnText = useRef<Map<string, string>>(new Map())
 
   // ── Sync room ref to parent ──
   useEffect(() => {
     roomRef.current = room
-    return () => {
-      roomRef.current = null
-    }
+    return () => { roomRef.current = null }
   }, [room, roomRef])
 
   // ── Sync voice state to parent ──
@@ -556,7 +664,6 @@ function VoiceBridge({
       setVoiceState('connecting')
       return
     }
-    // Connected — map agent state
     switch (agentState) {
       case 'listening':
         setVoiceState('listening')
@@ -575,24 +682,13 @@ function VoiceBridge({
   // ── Listen for data channel events ──
   useEffect(() => {
     if (!room) return
-
-    const handleData = (
-      payload: Uint8Array,
-      _participant?: unknown,
-      _kind?: DataPacket_Kind,
-    ) => {
-      onAgentData(payload)
-    }
-
+    const handleData = (payload: Uint8Array) => { onAgentData(payload) }
     room.on(RoomEvent.DataReceived, handleData)
-    return () => {
-      room.off(RoomEvent.DataReceived, handleData)
-    }
+    return () => { room.off(RoomEvent.DataReceived, handleData) }
   }, [room, onAgentData])
 
-  // ── Listen for voice transcriptions (ASSISTANT only) ──
-  // User transcription now comes from agent data channel (Gemini quality STT)
-  // LiveKit's TranscriptionReceived is only used for agent speech (TTS text)
+  // ── Listen for voice transcriptions (ASSISTANT speech → real-time streaming) ──
+  // Process ALL segments (including non-final) for real-time text streaming.
   useEffect(() => {
     if (!room) return
 
@@ -600,31 +696,48 @@ function VoiceBridge({
       segments: Array<{ id: string; text: string; final: boolean }>,
       participant?: { isLocal?: boolean },
     ) => {
-      // Skip user transcriptions — they come from agent data channel now
-      // (Gemini's STT is much more accurate than LiveKit's)
+      // Skip user transcriptions — they come from agent data channel
       if (participant?.isLocal) return
+      if (!segments || segments.length === 0) return
 
-      // Only process final segments we haven't seen yet
-      const newFinal = segments.filter(
-        (s) => s.final && !seenSegmentIds.current.has(s.id),
+      // Update accumulated text for each segment
+      for (const seg of segments) {
+        currentTurnText.current.set(seg.id, seg.text)
+      }
+
+      // Build full text from all accumulated segments in order
+      const allText = Array.from(currentTurnText.current.values()).join(' ').trim()
+      if (!allText) return
+
+      // Check if ALL segments are final
+      const allFinal = segments.every(s => s.final)
+
+      // Forward to parent with streaming state
+      onTranscription(
+        [{ id: 'combined', text: allText, final: allFinal }],
+        allFinal,
       )
-      if (newFinal.length === 0) return
 
-      // Mark as seen
-      newFinal.forEach((s) => seenSegmentIds.current.add(s.id))
-
-      const text = newFinal.map((s) => s.text).join(' ').trim()
-      if (!text) return
-
-      // Only forward assistant transcriptions
-      onTranscription(text, 'assistant')
+      // If all final, clear accumulator for next turn
+      if (allFinal) {
+        currentTurnText.current.clear()
+      }
     }
 
     room.on(RoomEvent.TranscriptionReceived, handleTranscription)
-    return () => {
-      room.off(RoomEvent.TranscriptionReceived, handleTranscription)
-    }
+    return () => { room.off(RoomEvent.TranscriptionReceived, handleTranscription) }
   }, [room, onTranscription])
 
-  return null // Bridge renders nothing
+  // ── Clear accumulator when agent stops speaking ──
+  useEffect(() => {
+    if (agentState !== 'speaking') {
+      // Small delay to let final segments arrive
+      const timer = setTimeout(() => {
+        currentTurnText.current.clear()
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [agentState])
+
+  return null
 }

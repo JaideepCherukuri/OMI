@@ -283,30 +283,52 @@ function GiftAIApp({
   )
 
   // ── Contextual suggestion chips (for chat mode) ──
+  // Uses agent-provided suggestions if available, otherwise generates smart defaults.
   const chatSuggestions = useMemo(() => {
     if (!isOrbMinimized) return []
+
+    // Prefer agent-provided dynamic suggestions
+    if (voice.agentSuggestions.length > 0) {
+      return voice.agentSuggestions
+    }
+
+    // Fallback: generate context-aware suggestions
     if (voice.products.length > 0) {
       const firstProduct = voice.products[0]
-      const isGlobal = firstProduct?.isGlobal
-      // For global products: no "Add to cart" (only Shop Pay works), show "Shop first one" instead
-      const firstAction = isGlobal
-        ? { label: 'Shop first one', text: firstProduct?.title ? `Tell me more about ${firstProduct.title}` : 'Tell me about the first one', url: firstProduct?.directCheckoutUrl }
-        : { label: 'Add first one', text: firstProduct?.title ? `Add ${firstProduct.title} to my cart` : 'Add the first one to my cart' }
-      return [
-        firstAction,
-        { label: 'Tell me more', text: firstProduct?.title ? `Tell me more about ${firstProduct.title}` : 'Tell me more about the first one' },
-        { label: 'Cheaper options', text: 'Show me cheaper options' },
-        { label: 'More options', text: 'Show me more gift options' },
-      ]
+      const secondProduct = voice.products[1]
+      const hasCheckout = firstProduct?.directCheckoutUrl
+
+      // Dynamic chips based on actual product context
+      const chips: Array<{ label: string; text: string }> = []
+
+      if (hasCheckout) {
+        chips.push({ label: `Checkout ${firstProduct.title?.split(' ').slice(0, 3).join(' ') || 'first one'}`, text: `I want to buy ${firstProduct?.title || 'the first one'}` })
+      } else {
+        chips.push({ label: 'Buy first one', text: `I want to buy ${firstProduct?.title || 'the first one'}` })
+      }
+
+      if (secondProduct) {
+        chips.push({ label: `Compare options`, text: `Compare ${firstProduct?.title?.split(' ').slice(0, 2).join(' ')} and ${secondProduct?.title?.split(' ').slice(0, 2).join(' ')}` })
+      } else {
+        chips.push({ label: 'Tell me more', text: `Tell me more about ${firstProduct?.title || 'this product'}` })
+      }
+
+      chips.push({ label: 'Different style', text: 'Show me something in a different style' })
+      chips.push({ label: 'Under $30', text: 'Show me options under $30' })
+
+      return chips
     }
+
     if (voice.cartState && voice.cartState.totalQuantity > 0) {
       return [
-        { label: 'Checkout', text: 'Checkout please' },
-        { label: 'Keep shopping', text: 'Show me more gifts' },
+        { label: 'Checkout now', text: 'I\'m ready to checkout' },
+        { label: 'Add more gifts', text: 'Show me more gifts to add' },
+        { label: 'Gift wrap?', text: 'Do you have gift wrapping options?' },
       ]
     }
+
     return []
-  }, [isOrbMinimized, voice.products, voice.cartState])
+  }, [isOrbMinimized, voice.products, voice.cartState, voice.agentSuggestions])
 
   // ── Interleave messages with product cards + cart ──
   const chatItems = useMemo(() => {

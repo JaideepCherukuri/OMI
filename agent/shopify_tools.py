@@ -427,20 +427,41 @@ class ShopifyTools:
 
         # Publish full product data to frontend via data channel
         if results:
+            # Build a text blurb that matches what the agent should say
+            blurb_parts = [f"Found {len(results)} products for \"{query}\":"]
+            for i, p in enumerate(results[:3], 1):
+                blurb_parts.append(f"• **{p['title']}** — {p['priceRange']}")
+            text_blurb = "\n".join(blurb_parts)
+
             await self._publish({
                 "type": "products_found",
                 "products": results,
                 "query": query,
+                "text_blurb": text_blurb,
+            })
+
+            # Send contextual suggestion chips
+            first_title = results[0]['title'] if results else ''
+            short_title = ' '.join(first_title.split()[:3]) if first_title else 'this'
+            await self._publish({
+                "type": "suggestions",
+                "suggestions": [
+                    {"label": f"Buy {short_title}", "text": f"I want to buy {first_title}"},
+                    {"label": "Show me more", "text": f"Show me more {query} options"},
+                    {"label": "Different price", "text": f"Show me {query} in a different price range"},
+                    {"label": "Something else", "text": "Actually, show me something completely different"},
+                ],
             })
 
         if not results:
             return f"No products found matching '{query}'. Try a different search."
 
-        # Return concise summary for voice response (Gemini shouldn't recite all details)
+        # Return concise summary for voice response with product details
         summaries = []
         for i, p in enumerate(results[:6], 1):
-            summaries.append(f"{i}. {p['title']} — {p['priceRange']}")
-        return f"Found {len(results)} products:\n" + "\n".join(summaries)
+            vendor = p.get('vendor', '')
+            summaries.append(f"{i}. {p['title']} — {p['priceRange']}{f' from {vendor}' if vendor else ''}")
+        return f"Found {len(results)} products:\n" + "\n".join(summaries) + "\n\nDescribe the top 2-3 products with prices and what makes them special. Ask the user what interests them."
 
     @llm.function_tool(description="Search products across ALL Shopify stores worldwide. Use for broad discovery when the user wants to explore beyond our store, e.g. 'find me the best matcha set' or 'show me birthday gifts under $50'.")
     async def search_global_products(
@@ -534,19 +555,40 @@ class ShopifyTools:
 
         self._last_search_results = products_for_frontend
 
+        # Build text blurb for the chat display
+        blurb_parts = [f"Found {len(products_for_frontend)} products across Shopify for \"{query}\":"]
+        for i, p in enumerate(products_for_frontend[:3], 1):
+            blurb_parts.append(f"• **{p['title']}** — {p['priceRange']} from {p['vendor']}")
+        text_blurb = "\n".join(blurb_parts)
+
         # Publish to frontend
         await self._publish({
             "type": "products_found",
             "products": products_for_frontend,
             "query": query,
             "source": "catalog_mcp",
+            "text_blurb": text_blurb,
+        })
+
+        # Send contextual suggestion chips
+        first_title = products_for_frontend[0]['title'] if products_for_frontend else ''
+        short_title = ' '.join(first_title.split()[:3]) if first_title else 'this'
+        first_store = products_for_frontend[0].get('vendor', '') if products_for_frontend else ''
+        await self._publish({
+            "type": "suggestions",
+            "suggestions": [
+                {"label": f"Buy {short_title}", "text": f"I want to buy {first_title}"},
+                {"label": f"More from {first_store}" if first_store else "More options", "text": f"Show me more products from {first_store}" if first_store else f"Show me more {query} options"},
+                {"label": "Under $25", "text": f"Show me {query} under $25"},
+                {"label": "Premium picks", "text": f"Show me premium/luxury {query}"},
+            ],
         })
 
         # Build voice summary
         summaries = []
         for i, p in enumerate(products_for_frontend[:6], 1):
             summaries.append(f"{i}. {p['title']} — {p['priceRange']} from {p['vendor']}")
-        return f"Found {len(products_for_frontend)} products across Shopify:\n" + "\n".join(summaries)
+        return f"Found {len(products_for_frontend)} products across Shopify:\n" + "\n".join(summaries) + "\n\nDescribe the top 2-3 products with specific prices, store names, and what makes each one special. Ask the user what catches their eye."
 
     @llm.function_tool(description="Add a product to the shopping cart by title. Optionally specify a variant.")
     async def add_to_cart(
