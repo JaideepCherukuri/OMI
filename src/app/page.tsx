@@ -109,6 +109,43 @@ function GiftAIApp({
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
+  // ── Streaming welcome message while agent connects ──
+  const WELCOME_TEXT = "Search for products across 5 million+ global Shopify stores. Live AI is kicking off..."
+  const [welcomeText, setWelcomeText] = useState('')
+  const [showWelcome, setShowWelcome] = useState(false)
+  const welcomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Start typewriter when orb minimizes and no real messages yet
+  useEffect(() => {
+    if (isOrbMinimized && voice.messages.length === 0 && !showWelcome) {
+      setShowWelcome(true)
+      setWelcomeText('')
+      let i = 0
+      welcomeTimerRef.current = setInterval(() => {
+        i++
+        if (i <= WELCOME_TEXT.length) {
+          setWelcomeText(WELCOME_TEXT.slice(0, i))
+        } else {
+          if (welcomeTimerRef.current) clearInterval(welcomeTimerRef.current)
+        }
+      }, 25)
+    }
+    return () => {
+      if (welcomeTimerRef.current) clearInterval(welcomeTimerRef.current)
+    }
+  }, [isOrbMinimized, voice.messages.length, showWelcome])
+
+  // Hide welcome when real agent messages arrive
+  useEffect(() => {
+    if (voice.messages.length > 0 && showWelcome) {
+      setShowWelcome(false)
+      if (welcomeTimerRef.current) {
+        clearInterval(welcomeTimerRef.current)
+        welcomeTimerRef.current = null
+      }
+    }
+  }, [voice.messages.length, showWelcome])
+
   // Trigger isOrbMinimized when first message arrives
   useEffect(() => {
     if (voice.messages.length > 0 && !isOrbMinimized) {
@@ -546,6 +583,20 @@ function GiftAIApp({
           {/* Scrollable chat area */}
           <div className="flex-1 min-h-0 overflow-auto">
             <div className="max-w-4xl mx-auto px-4 pt-14 pb-4 space-y-1">
+              {/* Streaming welcome message while agent connects */}
+              {showWelcome && welcomeText && (
+                <ChatMessage
+                  key="welcome-connecting"
+                  message={{
+                    id: 'welcome-connecting',
+                    role: 'assistant',
+                    content: welcomeText,
+                    timestamp: Date.now(),
+                    source: 'system',
+                    streaming: true,
+                  }}
+                />
+              )}
               {chatItems.map((item) => {
                 if (item.type === 'message') {
                   return <ChatMessage key={item.key} message={item.data} />
