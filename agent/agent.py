@@ -132,16 +132,6 @@ async def entrypoint(ctx: JobContext):
         close_on_disconnect=False,
     )
 
-    # ── Check participant metadata for conversation context ──
-    conversation_context = ""
-    for participant in ctx.room.remote_participants.values():
-        if participant.metadata:
-            try:
-                meta = json.loads(participant.metadata)
-                conversation_context = meta.get("conversationContext", "")
-            except (json.JSONDecodeError, AttributeError):
-                pass
-
     # ── Start session ──
     await session.start(
         room=ctx.room,
@@ -150,14 +140,55 @@ async def entrypoint(ctx: JobContext):
     )
     logger.info("Session started")
 
-    # ── Greet immediately — no delays ──
+    # ── Wait for user to join, then read their metadata for context ──
+    # The agent connects first; the user joins shortly after with their JWT
+    # which may contain conversation context in the metadata field.
+    conversation_context = ""
+
+    # Check if user is already in the room
+    for participant in ctx.room.remote_participants.values():
+        if participant.metadata:
+            try:
+                meta = json.loads(participant.metadata)
+                conversation_context = meta.get("conversationContext", "")
+                if conversation_context:
+                    logger.info(f"Context from existing participant: {conversation_context[:80]}...")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    # If no context yet, wait briefly for user to join with metadata
+    if not conversation_context:
+        context_event = asyncio.Event()
+
+        def _on_participant_connected(participant: rtc.RemoteParticipant):
+            nonlocal conversation_context
+            if participant.metadata:
+                try:
+                    meta = json.loads(participant.metadata)
+                    ctx_text = meta.get("conversationContext", "")
+                    if ctx_text:
+                        conversation_context = ctx_text
+                        logger.info(f"Context from joining participant: {ctx_text[:80]}...")
+                        context_event.set()
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+        ctx.room.on("participant_connected", _on_participant_connected)
+        try:
+            await asyncio.wait_for(context_event.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.info("No conversation context received (timeout)")
+        ctx.room.off("participant_connected", _on_participant_connected)
+
+    # ── Greet with or without context ──
     if conversation_context:
-        logger.info(f"Context-aware greeting (context: {conversation_context[:60]}...)")
+        logger.info(f"Context-aware greeting")
         await session.generate_reply(
             instructions=(
                 f"The user was chatting via text before switching to voice. "
                 f"Their conversation:\n{conversation_context}\n\n"
-                f"Continue naturally in 1-2 sentences. Don't re-introduce yourself."
+                f"Continue naturally — acknowledge what they were looking at "
+                f"and offer to help further. 1-2 sentences. Don't re-introduce yourself."
             )
         )
     else:
