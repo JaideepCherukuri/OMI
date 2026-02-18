@@ -44,36 +44,79 @@ export default function Stage({
     <div className="h-full flex flex-col">
       {/* ── Welcome: Large centered Orb ──────── */}
       {content === 'welcome' && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-6">
+        <div className="flex-1 flex flex-col items-center justify-center gap-5">
           <Orb
             state={voiceState}
             size="lg"
             onClick={() => {
               if (voiceState === 'disconnected' && onConnect) {
+                // Haptic feedback
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  navigator.vibrate(50)
+                }
+                // Instant audio feedback — short chime via Web Audio API
+                try {
+                  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+                  const osc = ctx.createOscillator()
+                  const gain = ctx.createGain()
+                  osc.connect(gain)
+                  gain.connect(ctx.destination)
+                  osc.frequency.value = 880
+                  osc.type = 'sine'
+                  gain.gain.setValueAtTime(0.15, ctx.currentTime)
+                  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15)
+                  osc.start(ctx.currentTime)
+                  osc.stop(ctx.currentTime + 0.15)
+                } catch {}
                 onConnect()
               }
             }}
           />
-          <div className="text-center space-y-2">
-            <p className="text-gray-400 text-sm">
-              {voiceState === 'disconnected'
-                ? 'Tap the mic to start voice shopping'
-                : voiceState === 'connecting'
-                  ? 'Connecting to voice agent...'
-                  : voiceState === 'listening'
-                    ? 'Listening...'
-                    : voiceState === 'thinking'
-                      ? 'Finding gifts...'
-                      : voiceState === 'speaking'
-                        ? 'Speaking...'
-                        : 'Ready — say something or type below'}
+
+          {/* TAP TO START — only when disconnected */}
+          {voiceState === 'disconnected' && (
+            <p
+              className="text-[var(--muted)] text-xs font-medium tracking-[0.25em] uppercase cursor-pointer"
+              onClick={() => {
+                if (onConnect) {
+                  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                    navigator.vibrate(50)
+                  }
+                  try {
+                    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+                    const osc = ctx.createOscillator()
+                    const gain = ctx.createGain()
+                    osc.connect(gain)
+                    gain.connect(ctx.destination)
+                    osc.frequency.value = 880
+                    osc.type = 'sine'
+                    gain.gain.setValueAtTime(0.15, ctx.currentTime)
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15)
+                    osc.start(ctx.currentTime)
+                    osc.stop(ctx.currentTime + 0.15)
+                  } catch {}
+                  onConnect()
+                }
+              }}
+            >
+              Tap to start
             </p>
-            {voiceState === 'disconnected' && (
-              <p className="text-gray-600 text-xs">
-                Or type a message to search with text
-              </p>
-            )}
-          </div>
+          )}
+
+          {/* State text when connected */}
+          {voiceState !== 'disconnected' && (
+            <p className="text-[var(--muted)] text-sm">
+              {voiceState === 'connecting'
+                ? 'Connecting...'
+                : voiceState === 'listening'
+                  ? 'Listening...'
+                  : voiceState === 'thinking'
+                    ? 'Finding gifts...'
+                    : voiceState === 'speaking'
+                      ? 'Speaking...'
+                      : 'Ready — say something or type below'}
+            </p>
+          )}
         </div>
       )}
 
