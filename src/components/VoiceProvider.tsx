@@ -535,34 +535,32 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   )
 
   // ── Render ─────────────────────────────────
-  if (!shouldConnect || !token || !serverUrl) {
-    return (
-      <VoiceContext.Provider value={value}>
-        {children}
-      </VoiceContext.Provider>
-    )
-  }
-
+  // IMPORTANT: {children} must stay at the same tree position regardless of
+  // voice connection state. If children moved inside/outside <LiveKitRoom>,
+  // React would remount them, resetting all page state (isOrbMinimized etc).
+  // LiveKitRoom + VoiceBridge mount as siblings when voice connects.
   return (
     <VoiceContext.Provider value={value}>
-      <LiveKitRoom
-        token={token}
-        serverUrl={serverUrl}
-        audio={true}
-        video={false}
-        connect={shouldConnect}
-        style={{ display: 'contents' }}
-      >
-        <RoomAudioRenderer />
-        <StartAudio label="Click to enable audio" />
-        <VoiceBridge
-          roomRef={roomRef}
-          setVoiceState={setVoiceState}
-          onAgentData={handleAgentData}
-          onTranscription={handleTranscription}
-        />
-        {children}
-      </LiveKitRoom>
+      {shouldConnect && token && serverUrl && (
+        <LiveKitRoom
+          token={token}
+          serverUrl={serverUrl}
+          audio={true}
+          video={false}
+          connect={shouldConnect}
+          style={{ display: 'contents' }}
+        >
+          <RoomAudioRenderer />
+          <StartAudio label="Click to enable audio" />
+          <VoiceBridge
+            roomRef={roomRef}
+            setVoiceState={setVoiceState}
+            onAgentData={handleAgentData}
+            onTranscription={handleTranscription}
+          />
+        </LiveKitRoom>
+      )}
+      {children}
     </VoiceContext.Provider>
   )
 }
