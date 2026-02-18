@@ -122,6 +122,11 @@ function renderInline(text: string): React.ReactNode[] {
   return parts.length > 0 ? parts : [text]
 }
 
+// Flag to hide user voice transcription bubbles (Gemini's input_audio_transcription
+// has no language pinning and frequently misdetects English as other languages).
+// Set to false to re-enable once Gemini adds language hints support.
+const SHOW_USER_VOICE_TRANSCRIPTION = false
+
 export default function ChatMessage({ message: msg }: ChatMessageProps) {
   // System messages
   if (msg.role === 'system') {
@@ -130,6 +135,11 @@ export default function ChatMessage({ message: msg }: ChatMessageProps) {
         <span className="text-xs text-[var(--muted-foreground)] italic font-mono uppercase tracking-wider">{msg.content}</span>
       </div>
     )
+  }
+
+  // User voice transcription — hidden by flag (inaccurate language detection)
+  if (msg.role === 'user' && msg.source === 'voice' && !SHOW_USER_VOICE_TRANSCRIPTION) {
+    return null
   }
 
   // User messages — right-aligned HALO bubble

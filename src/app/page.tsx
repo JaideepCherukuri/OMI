@@ -113,13 +113,15 @@ function GiftAIApp({
   const WELCOME_TEXT = "Search for products across 5 million+ global Shopify stores. Live AI is kicking off..."
   const [welcomeText, setWelcomeText] = useState('')
   const [showWelcome, setShowWelcome] = useState(false)
+  const welcomeStartedRef = useRef(false)
   const welcomeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Start typewriter when orb minimizes and no real messages yet
+  // Uses a ref (not state) for the "started" flag to avoid re-triggering the effect
   useEffect(() => {
-    if (isOrbMinimized && voice.messages.length === 0 && !showWelcome) {
+    if (isOrbMinimized && voice.messages.length === 0 && !welcomeStartedRef.current) {
+      welcomeStartedRef.current = true
       setShowWelcome(true)
-      setWelcomeText('')
       let i = 0
       welcomeTimerRef.current = setInterval(() => {
         i++
@@ -130,21 +132,26 @@ function GiftAIApp({
         }
       }, 25)
     }
-    return () => {
-      if (welcomeTimerRef.current) clearInterval(welcomeTimerRef.current)
-    }
-  }, [isOrbMinimized, voice.messages.length, showWelcome])
+  }, [isOrbMinimized, voice.messages.length])
 
   // Hide welcome when real agent messages arrive
   useEffect(() => {
     if (voice.messages.length > 0 && showWelcome) {
       setShowWelcome(false)
+      welcomeStartedRef.current = false
       if (welcomeTimerRef.current) {
         clearInterval(welcomeTimerRef.current)
         welcomeTimerRef.current = null
       }
     }
   }, [voice.messages.length, showWelcome])
+
+  // Cleanup interval on unmount only
+  useEffect(() => {
+    return () => {
+      if (welcomeTimerRef.current) clearInterval(welcomeTimerRef.current)
+    }
+  }, [])
 
   // Trigger isOrbMinimized when first message arrives
   useEffect(() => {
