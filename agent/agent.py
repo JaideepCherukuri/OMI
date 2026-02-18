@@ -236,26 +236,28 @@ async def entrypoint(ctx: JobContext):
     #   - Gemini input_audio_transcription (after processing)
     # We forward these to the frontend via the data channel.
 
+    # NOTE: LiveKit event emitter requires SYNC callbacks.
+    # Use asyncio.create_task() for async work inside handlers.
+
     @session.on("user_input_transcribed")
-    async def on_user_transcribed(ev):
+    def on_user_transcribed(ev):
         transcript = ev.transcript.strip() if ev.transcript else ""
         if not transcript:
             return
 
         logger.info(f"User transcription (final={ev.is_final}): {transcript[:80]}...")
-        await _publish_data(ctx.room, {
+        asyncio.create_task(_publish_data(ctx.room, {
             "type": "user_transcription",
             "text": transcript,
             "isFinal": ev.is_final,
-        })
+        }))
 
     # ── Forward agent speech transcription to frontend ──
     @session.on("conversation_item_added")
-    async def on_conversation_item(ev):
+    def on_conversation_item(ev):
         try:
             item = ev.item
             if hasattr(item, 'role') and item.role == "assistant":
-                # Get text content from the message
                 content = ""
                 if hasattr(item, 'content') and item.content:
                     for part in item.content:
@@ -264,11 +266,11 @@ async def entrypoint(ctx: JobContext):
                         elif hasattr(part, 'text'):
                             content += part.text
                 if content:
-                    await _publish_data(ctx.room, {
+                    asyncio.create_task(_publish_data(ctx.room, {
                         "type": "agent_transcription",
                         "text": content.strip(),
                         "isFinal": True,
-                    })
+                    }))
         except Exception as e:
             logger.error(f"Error forwarding agent transcription: {e}")
 
