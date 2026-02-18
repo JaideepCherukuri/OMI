@@ -150,6 +150,25 @@ function GiftAIApp({
 
   // ── orbdesign mic toggle (exact same) ──
   const handleToggle = useCallback(() => {
+    // Haptic feedback
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(50)
+    }
+    // Instant audio chime (880Hz, 150ms)
+    try {
+      const actx = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const osc = actx.createOscillator()
+      const gain = actx.createGain()
+      osc.connect(gain)
+      gain.connect(actx.destination)
+      osc.frequency.value = 880
+      osc.type = 'sine'
+      gain.gain.setValueAtTime(0.12, actx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.15)
+      osc.start(actx.currentTime)
+      osc.stop(actx.currentTime + 0.15)
+    } catch {}
+
     if (mode === 'IDLE') {
       startMic()
       // Also connect voice if disconnected
@@ -482,8 +501,20 @@ function GiftAIApp({
           </div>
         </div>
 
-        {/* Status text removed — already shows above the input bar */}
-        <div className="mt-5 sm:mt-7 md:mt-9 min-h-[1.25rem]" />
+        {/* TAP TO START */}
+        <div className="mt-5 sm:mt-7 md:mt-9 min-h-[1.25rem] flex items-center justify-center">
+          {mode === 'IDLE' && (
+            <p
+              className={cn(
+                "text-xs font-medium tracking-[0.25em] uppercase cursor-pointer transition-opacity duration-500",
+                isDarkMode ? "text-white/40" : "text-[var(--muted)]"
+              )}
+              onClick={handleToggle}
+            >
+              Tap to start
+            </p>
+          )}
+        </div>
 
         {/* Headline + Subtext (OMI branding) */}
         <div className="flex flex-col items-center text-center w-full mt-3 sm:mt-5 md:mt-6 space-y-1.5 sm:space-y-2.5 md:space-y-3">
