@@ -330,84 +330,38 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       const event = JSON.parse(new TextDecoder().decode(payload))
       const type = event.type as string
 
-      // ── User transcription (from Gemini's STT via agent) ──
-      // Agent sends streaming partials. We update the current user message in-place.
+      // ── User transcription (from Gemini via agent data channel) ──
       if (type === 'user_transcription') {
-        const text = (event.text || '').trim()
-        const utteranceId = event.utteranceId || null
-        const isFinal = event.isFinal !== false  // default true for backward compat
-
-        if (!text) return
-
-        setMessages((prev) => {
-          // Find existing streaming user message with same utteranceId, or recent voice-user
-          const existingIdx = prev.findIndex(
-            (m) => m.role === 'user' && m.source === 'voice' && m.streaming &&
-                   (utteranceId ? m.id === `voice-user-${utteranceId}` : Date.now() - m.timestamp < 4000)
-          )
-
-          if (existingIdx >= 0) {
-            // Update existing streaming message
-            const updated = [...prev]
-            updated[existingIdx] = {
-              ...updated[existingIdx],
-              content: text,
-              timestamp: Date.now(),
-              streaming: !isFinal,
-            }
-            return updated
-          }
-
-          // Create new streaming user message
-          return [
-            ...prev,
-            {
-              id: utteranceId ? `voice-user-${utteranceId}` : `voice-user-${Date.now()}`,
-              role: 'user',
-              content: text,
-              timestamp: Date.now(),
-              source: 'voice',
-              streaming: !isFinal,
-            },
-          ]
-        })
-        return
-      }
-
-      // ── Agent speech transcription (what the agent is saying, streamed) ──
-      if (type === 'agent_transcription') {
         const text = (event.text || '').trim()
         const isFinal = event.isFinal === true
 
         if (!text) return
 
         setMessages((prev) => {
-          // Find the last streaming assistant voice message
-          const lastIdx = prev.length - 1
-          const lastMsg = prev[lastIdx]
-          const isStreamingAssistant =
-            lastMsg &&
-            lastMsg.role === 'assistant' &&
-            lastMsg.source === 'voice' &&
-            lastMsg.streaming
-
-          if (isStreamingAssistant) {
-            const updated = [...prev]
-            updated[lastIdx] = {
-              ...updated[lastIdx],
-              content: text,
-              timestamp: Date.now(),
-              streaming: !isFinal,
+          // Search backward for ANY streaming user voice message (not just last)
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].role === 'user' && prev[i].source === 'voice' && prev[i].streaming) {
+              const updated = [...prev]
+              updated[i] = { ...updated[i], content: text, timestamp: Date.now(), streaming: !isFinal }
+              return updated
             }
-            return updated
           }
 
-          // Create new streaming assistant message
+          // Dedup: skip if a recent finalized user message has the same text
+          if (isFinal) {
+            for (let i = prev.length - 1; i >= Math.max(0, prev.length - 5); i--) {
+              if (prev[i].role === 'user' && prev[i].content === text && !prev[i].streaming) {
+                return prev
+              }
+            }
+          }
+
+          // Create new user message
           return [
             ...prev,
             {
-              id: `voice-assistant-${Date.now()}`,
-              role: 'assistant',
+              id: `voice-user-${Date.now()}`,
+              role: 'user',
               content: text,
               timestamp: Date.now(),
               source: 'voice',
@@ -498,7 +452,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   }, [])
 
   // ── Handle assistant voice transcriptions from LiveKit ──
-  // This captures the agent's spoken words and streams them into chat.
+  // This is the ONLY source of agent speech text (from Gemini's output_audio_transcription).
   const handleTranscription = useCallback((
     segments: Array<{ id: string; text: string; final: boolean }>,
     isFinal: boolean,
@@ -507,32 +461,24 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     if (!text) return
 
     setMessages((prev) => {
-      // Find the last streaming assistant voice message
-      const lastIdx = prev.length - 1
-      const lastMsg = prev[lastIdx]
-      const isStreamingAssistant =
-        lastMsg &&
-        lastMsg.role === 'assistant' &&
-        lastMsg.source === 'voice' &&
-        lastMsg.streaming
-
-      if (isStreamingAssistant) {
-        // Update existing streaming message
-        const updated = [...prev]
-        updated[lastIdx] = {
-          ...updated[lastIdx],
-          content: text,
-          streaming: !isFinal,
+      // Search backward for ANY streaming assistant voice message (not just last)
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].role === 'assistant' && prev[i].source === 'voice' && prev[i].streaming) {
+          const updated = [...prev]
+          updated[i] = { ...updated[i], content: text, streaming: !isFinal }
+          return updated
         }
-        return updated
       }
 
-      // Don't create duplicate if this text matches a recent non-streaming message
-      const recentMatch = prev.slice(-3).find(
-        m => m.role === 'assistant' && m.source === 'voice' &&
-             (m.content === text || text.startsWith(m.content) || m.content.startsWith(text))
-      )
-      if (recentMatch && !recentMatch.streaming) return prev
+      // Dedup: skip if a recent finalized assistant message has same/similar text
+      for (let i = prev.length - 1; i >= Math.max(0, prev.length - 5); i--) {
+        const m = prev[i]
+        if (m.role === 'assistant' && m.source === 'voice' && !m.streaming) {
+          if (m.content === text || text.startsWith(m.content) || m.content.startsWith(text)) {
+            return prev
+          }
+        }
+      }
 
       // Create new streaming assistant message
       return [

@@ -1,18 +1,11 @@
 """
-OMI Voice Agent — LiveKit Agents SDK + Gemini 2.5 Flash Realtime
+OMI Voice Agent — LiveKit Agents SDK + Gemini 2.5 Flash Native Audio
 
-Architecture:
-  LiveKit Cloud ←→ This Agent ←→ Gemini Realtime (audio + tool calls)
-                                ←→ Shopify APIs (search, cart, checkout)
-                ←→ Frontend via Data Channel (product cards, cart state)
-
-User Transcription:
-  Parallel Google Cloud STT runs alongside Gemini for real-time streaming.
-  Gemini processes audio natively for understanding; STT provides live text.
-
-Context Continuity:
-  Frontend sends conversation history via participant metadata in the token.
-  Agent reads metadata before greeting, ensuring seamless text→voice transition.
+Simple, clean architecture:
+  - Gemini handles ALL audio natively (understanding + response + transcription)
+  - output_audio_transcription → LiveKit publishes agent speech to room
+  - input_audio_transcription → agent forwards user text via data channel
+  - No parallel STT, no extra complexity
 
 Based on LiveKit Agents SDK v1.4.x.
 """
@@ -33,8 +26,8 @@ from google.genai import types as genai_types
 from shopify_tools import ShopifyTools
 from catalog_mcp import CatalogMCPClient, StorefrontMCPClient
 
-load_dotenv(".env.local")  # Local dev
-load_dotenv(".env")         # Docker / production
+load_dotenv(".env.local")
+load_dotenv(".env")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gift-agent")
@@ -43,14 +36,10 @@ logger = logging.getLogger("gift-agent")
 STORE_URL = os.getenv("SHOPIFY_STORE_URL", "jaguar-9969.myshopify.com")
 ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "")
 
-# Catalog MCP config (global search across all Shopify merchants)
+# Catalog MCP config
 CATALOG_CLIENT_ID = os.getenv("SHOPIFY_CATALOG_CLIENT_ID", "")
 CATALOG_CLIENT_SECRET = os.getenv("SHOPIFY_CATALOG_CLIENT_SECRET", "")
 
-# GCP credentials for Cloud Speech STT
-GCP_CREDENTIALS_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/app/gcp-key.json")
-
-# Agent personality / system prompt
 AGENT_INSTRUCTIONS = """You are Omi (pronounced "Oh-mee", one word, NOT spelled out as O-M-I) — a warm, friendly, and knowledgeable voice shopping assistant.
 
 IMPORTANT PRONUNCIATION: Always say your name as "Omi" (rhymes with "homie"), never spell it out letter by letter. Never say "O. M. I."
@@ -91,7 +80,7 @@ PRONUNCIATION: Your name is "Omi" (sounds like "Oh-mee"). NEVER say "O. M. I." o
 
 
 async def _publish_data(room: rtc.Room, data: dict) -> None:
-    """Publish data to the LiveKit data channel. MUST be awaited."""
+    """Publish JSON data to the LiveKit data channel."""
     try:
         payload = json.dumps(data).encode()
         await room.local_participant.publish_data(payload, reliable=True)
@@ -100,21 +89,19 @@ async def _publish_data(room: rtc.Room, data: dict) -> None:
 
 
 async def entrypoint(ctx: JobContext):
-    """Main agent entrypoint — one instance per LiveKit room/session."""
-    logger.info(f"=== JOB RECEIVED === Room: {ctx.job.room.name if ctx.job and ctx.job.room else 'Unknown'}")
+    """One instance per LiveKit room/session."""
+    logger.info(f"=== JOB === Room: {ctx.job.room.name if ctx.job and ctx.job.room else '?'}")
     await ctx.connect()
-    logger.info(f"Agent joined room: {ctx.room.name}")
+    logger.info(f"Joined room: {ctx.room.name}")
 
-    # Initialize Catalog MCP client (global search across all Shopify)
+    # ── Initialize tools ──
     catalog_client = None
     if CATALOG_CLIENT_ID and CATALOG_CLIENT_SECRET:
         catalog_client = CatalogMCPClient(CATALOG_CLIENT_ID, CATALOG_CLIENT_SECRET)
-        logger.info("Catalog MCP enabled — global product search active")
+        logger.info("Catalog MCP enabled")
 
-    # Initialize Storefront MCP client (single store, no auth)
     storefront_mcp = StorefrontMCPClient(STORE_URL)
 
-    # Initialize Shopify tools (one instance per session = one cart per session)
     shopify = ShopifyTools(
         store_url=STORE_URL,
         access_token=ACCESS_TOKEN,
@@ -124,194 +111,78 @@ async def entrypoint(ctx: JobContext):
     )
     tools = llm.find_function_tools(shopify)
 
-    # ── Configure models ──
-
-    # 1. Gemini Realtime (native audio understanding + response)
-    #    Only output_audio_transcription is enabled (for agent speech text).
-    #    User transcription comes from the parallel STT instead — it's faster
-    #    and doesn't duplicate with Gemini's delayed input transcription.
-    gemini_model = google.realtime.RealtimeModel(
+    # ── Gemini Realtime — handles everything natively ──
+    model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025",
         voice="Puck",
         temperature=0.7,
         modalities=["AUDIO"],
+        input_audio_transcription=genai_types.AudioTranscriptionConfig(),
         output_audio_transcription=genai_types.AudioTranscriptionConfig(),
     )
 
-    # 2. Google Cloud STT (parallel real-time transcription of user speech)
-    #    Runs alongside Gemini — STT provides live text for the UI,
-    #    while Gemini handles actual understanding and responses.
-    #    On Cloud Run, uses Application Default Credentials (service account).
-    #    Locally, uses gcp-key.json if present.
-    parallel_stt = None
-    try:
-        stt_kwargs = {
-            "languages": "en-US",
-            "detect_language": False,  # Force English only — prevents Arabic/other misdetection
-            "interim_results": True,
-            "model": "latest_long",
-        }
-        # Use explicit credentials file if available, otherwise fall back to ADC
-        if os.path.exists(GCP_CREDENTIALS_FILE):
-            stt_kwargs["credentials_file"] = GCP_CREDENTIALS_FILE
-            logger.info(f"Google Cloud STT: using credentials from {GCP_CREDENTIALS_FILE}")
-        else:
-            logger.info("Google Cloud STT: using Application Default Credentials")
-        parallel_stt = google.STT(**stt_kwargs)
-        logger.info("Google Cloud STT enabled for real-time user transcription")
-    except Exception as e:
-        logger.warning(f"Google Cloud STT not available, falling back to Gemini transcription only: {e}")
+    # ── Create session (no parallel STT — Gemini handles transcription) ──
+    session = AgentSession(
+        llm=model,
+        tools=tools,
+    )
 
-    # ── Wait for user participant to check for conversation context ──
-    conversation_context = ""
-
-    # Check existing participants
-    for participant in ctx.room.remote_participants.values():
-        meta = participant.metadata
-        if meta:
-            try:
-                meta_data = json.loads(meta)
-                conversation_context = meta_data.get("conversationContext", "")
-                if conversation_context:
-                    logger.info(f"Found conversation context from participant {participant.identity}: {conversation_context[:100]}...")
-            except (json.JSONDecodeError, AttributeError):
-                pass
-
-    # Also listen for new participants joining with context
-    context_received = asyncio.Event()
-
-    def on_participant_connected(participant: rtc.RemoteParticipant):
-        nonlocal conversation_context
-        meta = participant.metadata
-        if meta:
-            try:
-                meta_data = json.loads(meta)
-                ctx_text = meta_data.get("conversationContext", "")
-                if ctx_text:
-                    conversation_context = ctx_text
-                    logger.info(f"Received conversation context from {participant.identity}")
-                    context_received.set()
-            except (json.JSONDecodeError, AttributeError):
-                pass
-
-    def on_participant_metadata_changed(participant: rtc.Participant, old_metadata: str | None, new_metadata: str | None):
-        nonlocal conversation_context
-        if new_metadata:
-            try:
-                meta_data = json.loads(new_metadata)
-                ctx_text = meta_data.get("conversationContext", "")
-                if ctx_text:
-                    conversation_context = ctx_text
-                    logger.info(f"Received updated context from {participant.identity}")
-                    context_received.set()
-            except (json.JSONDecodeError, AttributeError):
-                pass
-
-    ctx.room.on("participant_connected", on_participant_connected)
-    ctx.room.on("participant_metadata_changed", on_participant_metadata_changed)
-
-    # ── Create agent session ──
-    session_kwargs = {
-        "llm": gemini_model,
-        "tools": tools,
-    }
-    if parallel_stt:
-        session_kwargs["stt"] = parallel_stt
-
-    session = AgentSession(**session_kwargs)
-
-    # Room options — keep agent alive across page refreshes
+    # ── Room options ──
     room_opts = room_io.RoomOptions(
         close_on_disconnect=False,
     )
 
-    # Start the session
+    # ── Check participant metadata for conversation context ──
+    conversation_context = ""
+    for participant in ctx.room.remote_participants.values():
+        if participant.metadata:
+            try:
+                meta = json.loads(participant.metadata)
+                conversation_context = meta.get("conversationContext", "")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    # ── Start session ──
     await session.start(
         room=ctx.room,
         agent=Agent(instructions=AGENT_INSTRUCTIONS),
         room_options=room_opts,
     )
-    logger.info("Agent session started.")
+    logger.info("Session started")
 
-    # ── Forward user transcriptions to frontend ──
-    # With parallel STT enabled and Gemini input_audio_transcription disabled,
-    # user_input_transcribed events come ONLY from Google Cloud STT.
-    # This gives real-time English-only partials without duplicates.
-
-    # NOTE: LiveKit event emitter requires SYNC callbacks.
-    # Use asyncio.create_task() for async work inside handlers.
-
-    @session.on("user_input_transcribed")
-    def on_user_transcribed(ev):
-        transcript = ev.transcript.strip() if ev.transcript else ""
-        if not transcript:
-            return
-
-        logger.info(f"User transcription (final={ev.is_final}): {transcript[:80]}...")
-        asyncio.create_task(_publish_data(ctx.room, {
-            "type": "user_transcription",
-            "text": transcript,
-            "isFinal": ev.is_final,
-        }))
-
-    # Agent speech text is handled by LiveKit's TranscriptionReceived on the frontend,
-    # sourced from Gemini's output_audio_transcription. No need for a data channel handler
-    # — that was causing duplicate assistant messages.
-
-    # ── Wait briefly for context, then send greeting ──
-    # If user comes from text mode, context arrives via participant metadata.
-    # If fresh session, no context — give standard greeting.
-    if not conversation_context:
-        # Wait up to 2s for context to arrive (user might still be connecting)
-        try:
-            await asyncio.wait_for(context_received.wait(), timeout=2.0)
-        except asyncio.TimeoutError:
-            pass
-
-    # Also check for context from data channel (backward compat)
-    data_context_received = asyncio.Event()
-    data_context_text = ""
-
-    @ctx.room.on("data_received")
-    def on_initial_data(data: bytes, participant, kind):
-        nonlocal data_context_text
-        try:
-            event = json.loads(data.decode())
-            if event.get("type") == "text_message" and "[Context from text chat" in event.get("content", ""):
-                data_context_text = event.get("content", "")
-                data_context_received.set()
-        except Exception:
-            pass
-
-    if not conversation_context:
-        try:
-            await asyncio.wait_for(data_context_received.wait(), timeout=2.0)
-            if data_context_text:
-                conversation_context = data_context_text
-        except asyncio.TimeoutError:
-            pass
-
-    # Generate context-aware greeting
+    # ── Greet immediately — no delays ──
     if conversation_context:
-        logger.info(f"Generating context-aware greeting with: {conversation_context[:100]}...")
+        logger.info(f"Context-aware greeting (context: {conversation_context[:60]}...)")
         await session.generate_reply(
             instructions=(
-                f"The user was previously chatting via text. Here's their conversation so far:\n\n"
-                f"{conversation_context}\n\n"
-                f"They've now switched to voice mode. Continue the conversation naturally — "
-                f"acknowledge what they were discussing and offer to help further. "
-                f"Keep it to 1-2 sentences. Don't re-introduce yourself if they already know you."
+                f"The user was chatting via text before switching to voice. "
+                f"Their conversation:\n{conversation_context}\n\n"
+                f"Continue naturally in 1-2 sentences. Don't re-introduce yourself."
             )
         )
     else:
         await session.generate_reply(
-            instructions="Greet the user warmly. Welcome them to Omi (pronounced Oh-mee). "
-                         "Ask what occasion they're shopping for. Keep it to 2 sentences max."
+            instructions="Greet the user warmly. You're Omi (say Oh-mee). "
+                         "Ask what occasion they're shopping for. 2 sentences max."
         )
+    logger.info("Greeting sent")
 
-    logger.info("Greeting complete. Agent is active.")
+    # ── Forward user transcriptions to frontend via data channel ──
+    # Gemini's input_audio_transcription provides these after processing.
+    # LiveKit event emitter requires SYNC handlers — use create_task for async work.
+    @session.on("user_input_transcribed")
+    def on_user_transcribed(ev):
+        text = ev.transcript.strip() if ev.transcript else ""
+        if not text:
+            return
+        logger.info(f"User said (final={ev.is_final}): {text[:60]}")
+        asyncio.create_task(_publish_data(ctx.room, {
+            "type": "user_transcription",
+            "text": text,
+            "isFinal": ev.is_final,
+        }))
 
-    # ── Handle ongoing data channel messages from frontend ──
+    # ── Handle data channel messages from frontend ──
     @ctx.room.on("data_received")
     def on_data(data: bytes, participant, kind):
         try:
@@ -320,9 +191,8 @@ async def entrypoint(ctx: JobContext):
 
             if event_type == "text_message":
                 content = event.get("content", "").strip()
-                # Skip context messages (already handled above)
                 if content and "[Context from text chat" not in content:
-                    logger.info(f"Text from frontend: {content}")
+                    logger.info(f"Text input: {content}")
                     session.generate_reply(
                         instructions=f'The user typed: "{content}". Respond naturally. Use tools if needed.'
                     )
@@ -330,39 +200,36 @@ async def entrypoint(ctx: JobContext):
             elif event_type == "user_action":
                 action = event.get("action", "")
                 if action == "add_to_cart":
-                    product_title = event.get("productTitle", "")
+                    title = event.get("productTitle", "")
                     variant = event.get("variantTitle", "")
                     session.generate_reply(
-                        instructions=f"Add '{product_title}'{f' variant {variant}' if variant else ''} to cart."
+                        instructions=f"Add '{title}'{f' variant {variant}' if variant else ''} to cart."
                     )
                 elif action == "checkout":
                     session.generate_reply(instructions="User wants to checkout. Call checkout tool.")
                 elif action == "view_cart":
                     session.generate_reply(instructions="User wants to see cart. Call view_cart tool.")
                 elif action == "view_details":
-                    product_title = event.get("productTitle", "")
+                    title = event.get("productTitle", "")
                     session.generate_reply(
-                        instructions=f"Describe '{product_title}' with details from get_product_details."
+                        instructions=f"Describe '{title}' with details from get_product_details."
                     )
 
         except Exception as e:
-            logger.error(f"Data channel handler error: {e}")
+            logger.error(f"Data handler error: {e}")
 
-    logger.info("Session fully configured. Agent persists across refreshes.")
+    logger.info("Agent fully active")
 
 
 async def accept_all_jobs(req):
-    """Accept jobs for any room (development mode)."""
     await req.accept()
 
 
 if __name__ == "__main__":
-    http_port = int(os.environ.get("PORT", 8080))
-
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,
             request_fnc=accept_all_jobs,
-            port=http_port,
+            port=int(os.environ.get("PORT", 8080)),
         )
     )
