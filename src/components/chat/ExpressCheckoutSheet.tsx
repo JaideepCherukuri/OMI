@@ -143,6 +143,23 @@ export default function ExpressCheckoutSheet({
         if (!cancelled) onClose()
       }) as EventListener)
 
+      // Handle auth/scope errors — Checkout Kit fires 'error' if JWT is invalid
+      el.addEventListener('error', ((event: Event) => {
+        console.warn('[ExpressCheckout] checkout element error:', event)
+        if (!cancelled && el.target === 'inline') {
+          // Inline mode failed (likely JWT scope) — try popup as fallback
+          console.log('[ExpressCheckout] inline failed, falling back to popup')
+          try {
+            el.target = 'popup'
+            el.open()
+            setMode('popup')
+            setIsReady(true)
+          } catch {
+            setMode('fallback')
+          }
+        }
+      }) as EventListener)
+
       // Mount into container
       if (containerRef.current && !cancelled) {
         containerRef.current.innerHTML = ''

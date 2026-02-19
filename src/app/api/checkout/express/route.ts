@@ -25,11 +25,39 @@ const VAULT_COOKIE = 'omi_vault'
 
 // ── Types ──
 
+/** The ProductDetail shape sent by VoiceProvider */
+interface ProductPayload {
+  productId?: number
+  title?: string
+  shopName?: string
+  shopUrl?: string
+  directCheckoutUrl?: string
+  variants?: Array<{
+    variantId?: number
+    gid?: string
+  }>
+  [key: string]: unknown
+}
+
+interface VariantPayload {
+  variantId?: number
+  gid?: string
+}
+
+/**
+ * Accepts BOTH the flat format (shopDomain + variantGid) AND
+ * the ProductDetail format (product + variant) from VoiceProvider.
+ */
 interface ExpressCheckoutRequest {
-  shopDomain: string
-  variantGid: string
+  // Flat format
+  shopDomain?: string
+  variantGid?: string
   quantity?: number
   skipPrefill?: boolean
+  // ProductDetail format (from VoiceProvider)
+  product?: ProductPayload
+  variant?: VariantPayload | null
+  vaultProfile?: unknown
 }
 
 interface ExpressCheckoutResponse {
@@ -102,11 +130,52 @@ function mapVaultAddress(
 export async function POST(req: NextRequest) {
   try {
     const body: ExpressCheckoutRequest = await req.json()
-    const { shopDomain, variantGid, quantity = 1, skipPrefill = false } = body
 
-    if (!shopDomain || !variantGid) {
+    // ── Extract shopDomain + variantGid from either request format ──
+    let shopDomain = body.shopDomain
+    let variantGid = body.variantGid
+    let directCheckoutUrl: string | undefined
+    const quantity = body.quantity ?? 1
+    const skipPrefill = body.skipPrefill ?? false
+
+    // VoiceProvider sends { product, variant } — extract fields from it
+    if (!shopDomain && body.product) {
+      const p = body.product
+
+      // Extract shop domain from shopUrl or shopName
+      if (p.shopUrl) {
+        try {
+          const url = new URL(p.shopUrl.startsWith('http') ? p.shopUrl : `https://${p.shopUrl}`)
+          shopDomain = url.hostname
+        } catch {
+          shopDomain = p.shopUrl
+        }
+      }
+
+      // directCheckoutUrl is the cart permalink from the Catalog
+      directCheckoutUrl = p.directCheckoutUrl || undefined
+
+      // Extract variant GID
+      const v = body.variant || (p.variants && p.variants[0])
+      if (v?.gid) {
+        variantGid = v.gid
+      } else if (v?.variantId) {
+        variantGid = `gid://shopify/ProductVariant/${v.variantId}`
+      }
+    }
+
+    // If we have a directCheckoutUrl from catalog but no domain/variant, use it directly
+    if (!shopDomain && directCheckoutUrl) {
+      try {
+        const url = new URL(directCheckoutUrl)
+        shopDomain = url.hostname
+      } catch { /* ignore */ }
+    }
+
+    // We need at least a checkoutUrl or shopDomain to proceed
+    if (!shopDomain && !directCheckoutUrl) {
       return NextResponse.json(
-        { error: 'Missing required fields: shopDomain, variantGid' },
+        { error: 'Missing shop domain. Provide shopDomain or product.shopUrl' },
         { status: 400 },
       )
     }
@@ -167,7 +236,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Step 4: Direct mode (no vault, skipPrefill, or MCP failure)
-    const checkoutUrl = buildCartPermalink(shopDomain, variantGid, quantity)
+    // Prefer the catalog's directCheckoutUrl (includes _gsid tracking), fallback to building one
+    const checkoutUrl = directCheckoutUrl
+      || (shopDomain && variantGid ? buildCartPermalink(shopDomain, variantGid, quantity) : null)
+
+    if (!checkoutUrl) {
+      return NextResponse.json(
+        { error: 'Could not construct checkout URL' },
+        { status: 400 },
+      )
+    }
+
     const response: ExpressCheckoutResponse = {
       mode: 'direct',
       checkoutUrl,
