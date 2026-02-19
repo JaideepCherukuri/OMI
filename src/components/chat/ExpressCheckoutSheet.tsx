@@ -112,7 +112,9 @@ export default function ExpressCheckoutSheet({
   const displayPrice = productInfo?.price
     ? typeof productInfo.price === 'number'
       ? `$${productInfo.price.toFixed(2)}`
-      : productInfo.price
+      : String(productInfo.price).startsWith('$')
+        ? productInfo.price
+        : `$${productInfo.price}`
     : null
 
   // Reset state when sheet opens
