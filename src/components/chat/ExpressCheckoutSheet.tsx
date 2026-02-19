@@ -1,52 +1,89 @@
 'use client'
 
 /**
- * ExpressCheckoutSheet — Bottom sheet overlay for in-app Shopify checkout.
+ * ExpressCheckoutSheet — In-app checkout bottom sheet.
  *
- * Uses Shopify's official Checkout Kit `<shopify-checkout>` web component
- * (loaded via CDN in layout.tsx). Attempts inline mode first (with JWT auth),
- * falling back to popup mode if inline fails or auth is unavailable.
+ * Shows a clean checkout summary with product info, buyer details (from vault),
+ * and a pre-filled checkout link. The actual Shopify checkout opens when the
+ * buyer taps "Pay now" — pre-filled with their vault email/address so they
+ * skip most manual entry.
  *
- * Design: Slides up from the bottom (60% desktop / 70% mobile), with
- * drag-to-dismiss. HALO Design System styled.
+ * Architecture:
+ *   1. Product data flows in from the parent (title, price, image, store).
+ *   2. Vault data (if available) is used to build pre-filled checkout URL params.
+ *   3. "Pay now" opens the checkout in a new tab with params pre-filled.
+ *   4. On return, SaveProfilePrompt can offer to save new buyer data.
+ *
+ * When Shopify publishes the Checkout Kit npm package with real inline support,
+ * or when Checkout MCP + ECP becomes available, this component can be upgraded
+ * to render the checkout form directly inline.
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { motion, AnimatePresence, useDragControls, PanInfo } from 'framer-motion'
-import { X, ExternalLink, Loader2, ShoppingBag, CheckCircle2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
+import { motion, AnimatePresence, useDragControls, type PanInfo } from 'framer-motion'
+import { X, ShoppingBag, ExternalLink, Shield, MapPin, Mail, ChevronRight, Loader2, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { BuyerVaultProfile, BuyerAddress } from '@/types'
 
-/* ------------------------------------------------------------------ */
-/*  Types for the Shopify Checkout Kit web component                   */
-/* ------------------------------------------------------------------ */
+// ── Types ──
 
-interface ShopifyCheckoutElement extends HTMLElement {
-  src: string
-  auth: string
-  target: 'auto' | 'popup' | 'inline'
-  orderConfirmation?: { orderId?: string; [key: string]: unknown }
-  open(): void
-  close(): void
-  focus(): void
+interface ProductInfo {
+  title?: string
+  price?: string | number
+  image?: string
+  shopName?: string
+  shopDomain?: string
+  variantId?: string | number
 }
 
-/* ------------------------------------------------------------------ */
-/*  Props                                                              */
-/* ------------------------------------------------------------------ */
-
-interface ExpressCheckoutSheetProps {
+export interface ExpressCheckoutSheetProps {
   isOpen: boolean
   onClose: () => void
   checkoutUrl: string | null
   jwt: string | null
   productTitle?: string | null
   shopName?: string | null
+  productInfo?: ProductInfo | null
+  vaultProfile?: BuyerVaultProfile | null | undefined
   onCheckoutComplete?: (orderData?: any) => void
 }
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                          */
-/* ------------------------------------------------------------------ */
+// ── Helpers ──
+
+/**
+ * Build a pre-filled checkout URL by appending buyer info as query params.
+ * Shopify cart permalinks support: checkout[email], checkout[shipping_address][*]
+ * See: https://shopify.dev/docs/apps/build/checkout/create-cart-permalinks
+ */
+function buildPrefilledUrl(
+  baseUrl: string,
+  vault: BuyerVaultProfile | null | undefined,
+): string {
+  if (!vault) return baseUrl
+
+  try {
+    const url = new URL(baseUrl)
+    if (vault.email) url.searchParams.set('checkout[email]', vault.email)
+    if (vault.phone) url.searchParams.set('checkout[shipping_address][phone]', vault.phone)
+
+    const addr: BuyerAddress | undefined = vault.addresses?.[0]
+    if (addr) {
+      url.searchParams.set('checkout[shipping_address][first_name]', addr.firstName || '')
+      url.searchParams.set('checkout[shipping_address][last_name]', addr.lastName || '')
+      url.searchParams.set('checkout[shipping_address][address1]', addr.streetAddress || '')
+      url.searchParams.set('checkout[shipping_address][city]', addr.addressLocality || '')
+      url.searchParams.set('checkout[shipping_address][province]', addr.addressRegion || '')
+      url.searchParams.set('checkout[shipping_address][zip]', addr.postalCode || '')
+      url.searchParams.set('checkout[shipping_address][country]', addr.addressCountry || '')
+    }
+
+    return url.toString()
+  } catch {
+    return baseUrl
+  }
+}
+
+// ── Component ──
 
 export default function ExpressCheckoutSheet({
   isOpen,
@@ -55,205 +92,71 @@ export default function ExpressCheckoutSheet({
   jwt,
   productTitle,
   shopName,
+  productInfo,
+  vaultProfile,
   onCheckoutComplete,
 }: ExpressCheckoutSheetProps) {
-  const [mode, setMode] = useState<'loading' | 'inline' | 'popup' | 'fallback' | 'complete'>('loading')
-  const [isReady, setIsReady] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const checkoutElRef = useRef<ShopifyCheckoutElement | null>(null)
   const dragControls = useDragControls()
+  const [checkoutOpened, setCheckoutOpened] = useState(false)
+  const [status, setStatus] = useState<'summary' | 'opening' | 'waiting' | 'complete'>('summary')
+  const returnCheckRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  /* ---- Reset state when sheet opens/closes ---- */
+  // Build pre-filled URL
+  const prefilledUrl = useMemo(
+    () => (checkoutUrl ? buildPrefilledUrl(checkoutUrl, vaultProfile) : null),
+    [checkoutUrl, vaultProfile],
+  )
+
+  const hasVault = !!(vaultProfile?.email || (vaultProfile?.addresses && vaultProfile.addresses.length > 0))
+  const addr: BuyerAddress | undefined = vaultProfile?.addresses?.[0]
+  const displayPrice = productInfo?.price
+    ? typeof productInfo.price === 'number'
+      ? `$${productInfo.price.toFixed(2)}`
+      : productInfo.price
+    : null
+
+  // Reset state when sheet opens
   useEffect(() => {
     if (isOpen) {
-      setMode('loading')
-      setIsReady(false)
-    } else {
-      // Cleanup: remove the element when sheet closes
-      if (checkoutElRef.current) {
-        try { checkoutElRef.current.close() } catch { /* noop */ }
-        checkoutElRef.current.remove()
-        checkoutElRef.current = null
-      }
+      setStatus('summary')
+      setCheckoutOpened(false)
+    }
+    return () => {
+      if (returnCheckRef.current) clearInterval(returnCheckRef.current)
     }
   }, [isOpen])
 
-  /* ---- Mount <shopify-checkout> when open + URL ready ---- */
-  useEffect(() => {
-    if (!isOpen || !checkoutUrl || !containerRef.current) return
+  // Handle "Pay now" tap
+  const handlePayNow = useCallback(() => {
+    if (!prefilledUrl) return
 
-    // Wait for the web component to be defined (CDN loaded)
-    const waitForComponent = async (): Promise<boolean> => {
-      // Check if already defined
-      if (customElements.get('shopify-checkout')) return true
-      // Wait up to 5s
-      try {
-        await Promise.race([
-          customElements.whenDefined('shopify-checkout'),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
-        ])
-        return true
-      } catch {
-        return false
-      }
-    }
+    setStatus('opening')
 
-    let cancelled = false
+    // Small delay for animation, then open checkout
+    setTimeout(() => {
+      window.open(prefilledUrl, '_blank')
+      setStatus('waiting')
+      setCheckoutOpened(true)
+    }, 300)
+  }, [prefilledUrl])
 
-    const init = async () => {
-      const componentReady = await waitForComponent()
-
-      if (cancelled) return
-
-      if (!componentReady) {
-        // CDN didn't load — fall back to external link
-        console.warn('[ExpressCheckout] shopify-checkout web component not available, using fallback')
-        setMode('fallback')
-        return
-      }
-
-      // Create the element
-      const el = document.createElement('shopify-checkout') as ShopifyCheckoutElement
-      el.src = checkoutUrl
-
-      // Try inline mode if we have JWT
-      if (jwt) {
-        el.auth = jwt
-        el.target = 'inline'
-
-        // Style for inline embed
-        el.style.width = '100%'
-        el.style.height = '100%'
-        el.style.display = 'block'
-      } else {
-        // No JWT — use popup mode
-        el.target = 'popup'
-      }
-
-      // Event listeners
-      el.addEventListener('checkout:complete', ((event: Event) => {
-        const target = event.target as ShopifyCheckoutElement
-        setMode('complete')
-        onCheckoutComplete?.(target.orderConfirmation ?? {})
-        // Auto-close after brief celebration
-        setTimeout(() => { if (!cancelled) onClose() }, 2500)
-      }) as EventListener)
-
-      el.addEventListener('checkout:close', (() => {
-        if (!cancelled) onClose()
-      }) as EventListener)
-
-      // Handle auth/scope errors — Checkout Kit fires 'error' if JWT is invalid
-      el.addEventListener('error', ((event: Event) => {
-        console.warn('[ExpressCheckout] checkout element error:', event)
-        if (!cancelled && el.target === 'inline') {
-          // Inline mode failed (likely JWT scope) — try popup as fallback
-          console.log('[ExpressCheckout] inline failed, falling back to popup')
-          try {
-            el.target = 'popup'
-            el.open()
-            setMode('popup')
-            setIsReady(true)
-          } catch {
-            setMode('fallback')
-          }
-        }
-      }) as EventListener)
-
-      // Mount into container
-      if (containerRef.current && !cancelled) {
-        containerRef.current.innerHTML = ''
-        containerRef.current.appendChild(el)
-        checkoutElRef.current = el
-
-        if (jwt && el.target === 'inline') {
-          // Inline renders immediately
-          setMode('inline')
-          // Give it a moment to render, then mark ready
-          setTimeout(() => { if (!cancelled) setIsReady(true) }, 800)
-        } else {
-          // Popup mode — open the popup
-          setMode('popup')
-          setIsReady(true)
-          try {
-            el.open()
-          } catch (err) {
-            console.warn('[ExpressCheckout] popup open failed:', err)
-            setMode('fallback')
-          }
-        }
-      }
-    }
-
-    init()
-
-    return () => {
-      cancelled = true
-    }
-  }, [isOpen, checkoutUrl, jwt, onCheckoutComplete, onClose])
-
-  /* ---- Timeout: if inline doesn't render in 10s, fall back ---- */
-  useEffect(() => {
-    if (mode !== 'inline' || isReady) return
-    const timer = setTimeout(() => {
-      if (!isReady) {
-        console.warn('[ExpressCheckout] inline mode timed out, falling back')
-        // Try popup as fallback
-        if (checkoutElRef.current) {
-          try {
-            checkoutElRef.current.target = 'popup'
-            checkoutElRef.current.open()
-            setMode('popup')
-            setIsReady(true)
-          } catch {
-            setMode('fallback')
-          }
-        } else {
-          setMode('fallback')
-        }
-      }
-    }, 10000)
-    return () => clearTimeout(timer)
-  }, [mode, isReady])
-
-  /* ---- Escape key ---- */
-  useEffect(() => {
-    if (!isOpen) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose])
-
-  /* ---- Drag-to-dismiss ---- */
+  // Drag to dismiss
   const handleDragEnd = useCallback(
     (_: any, info: PanInfo) => {
-      if (info.offset.y > 100 || info.velocity.y > 300) {
-        onClose()
-      }
+      if (info.offset.y > 100 || info.velocity.y > 300) onClose()
     },
     [onClose],
   )
 
-  /* ---- Open in popup (manual trigger) ---- */
-  const handleOpenPopup = useCallback(() => {
-    if (checkoutElRef.current) {
-      try {
-        checkoutElRef.current.target = 'popup'
-        checkoutElRef.current.open()
-        setMode('popup')
-      } catch {
-        // Last resort: open URL directly
-        if (checkoutUrl) window.open(checkoutUrl, '_blank')
-      }
-    } else if (checkoutUrl) {
-      window.open(checkoutUrl, '_blank')
+  // Escape key
+  useEffect(() => {
+    if (!isOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose() }
     }
-  }, [checkoutUrl])
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isOpen, onClose])
 
   return (
     <AnimatePresence>
@@ -282,10 +185,10 @@ export default function ExpressCheckoutSheet({
             onDragEnd={handleDragEnd}
             className={cn(
               'fixed bottom-0 left-0 right-0 z-[61]',
-              'bg-[var(--card)] rounded-t-[calc(var(--radius)*2)] overflow-hidden',
+              'bg-[var(--card)] rounded-t-[20px] overflow-hidden',
               'border-t border-x border-[var(--border)]',
               'shadow-2xl font-sans',
-              'h-[70vh] md:h-[60vh]',
+              'max-h-[85vh] md:max-h-[70vh]',
               'flex flex-col',
             )}
           >
@@ -294,140 +197,188 @@ export default function ExpressCheckoutSheet({
               className="flex justify-center pt-3 pb-1 cursor-grab active:cursor-grabbing flex-shrink-0"
               onPointerDown={(e) => dragControls.start(e)}
             >
-              <div className="w-10 h-1.5 rounded-full bg-[var(--muted-foreground)]/50" />
+              <div className="w-10 h-1.5 rounded-full bg-[var(--muted-foreground)]/40" />
             </div>
 
             {/* Header */}
-            <div className="flex items-center justify-between px-4 pb-3 border-b border-[var(--border)] flex-shrink-0">
+            <div className="flex items-center justify-between px-5 pb-3 flex-shrink-0">
               <div className="min-w-0">
-                <h3 className="text-sm font-bold text-[var(--card-foreground)] uppercase tracking-[0.12em] font-mono truncate">
+                <h3 className="text-sm font-bold text-[var(--card-foreground)] uppercase tracking-[0.1em] font-mono">
                   ⚡ Express Checkout
                 </h3>
-                {productTitle && (
-                  <p className="text-xs text-[var(--muted-foreground)] truncate mt-0.5">
-                    {productTitle}
-                    {shopName ? ` · ${shopName}` : ''}
-                  </p>
+                {shopName && (
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">{shopName}</p>
                 )}
               </div>
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-[var(--radius)] hover:bg-[var(--muted)]/30 transition-colors flex-shrink-0"
+                className="p-1.5 rounded-lg hover:bg-[var(--muted)]/30 transition-colors flex-shrink-0"
                 aria-label="Close checkout"
               >
                 <X size={18} className="text-[var(--muted-foreground)]" />
               </button>
             </div>
 
-            {/* Content area */}
-            <div className="flex-1 relative overflow-hidden">
+            {/* Divider */}
+            <div className="h-px bg-[var(--border)] mx-5" />
 
-              {/* Loading state */}
-              {mode === 'loading' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
-                  <Loader2 size={28} className="text-[var(--brand)] animate-spin" />
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    Loading secure checkout…
-                  </p>
-                </div>
-              )}
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
 
-              {/* Inline mode: web component renders here */}
-              {mode === 'inline' && !isReady && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
-                  <Loader2 size={28} className="text-[var(--brand)] animate-spin" />
-                  <p className="text-sm text-[var(--muted-foreground)]">
-                    Preparing checkout…
-                  </p>
-                </div>
-              )}
-
-              {/* Container for <shopify-checkout> element */}
-              <div
-                ref={containerRef}
-                className={cn(
-                  'w-full h-full',
-                  mode === 'inline' && isReady ? 'opacity-100' : 'opacity-0',
-                  'transition-opacity duration-300',
-                )}
-              />
-
-              {/* Popup mode: show confirmation that popup opened */}
-              {mode === 'popup' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6">
-                  <ShoppingBag size={36} className="text-[var(--brand)]" />
-                  <div className="text-center space-y-2">
-                    <p className="text-base font-semibold text-[var(--card-foreground)]">
-                      Checkout opened in a popup
-                    </p>
-                    <p className="text-sm text-[var(--muted-foreground)]">
-                      Complete your purchase in the checkout window.
-                      {productTitle ? ` Buying: ${productTitle}` : ''}
-                    </p>
+              {/* Product Summary */}
+              <div className="flex gap-3">
+                {productInfo?.image && (
+                  <div className="w-16 h-16 rounded-lg overflow-hidden bg-[var(--muted)] flex-shrink-0">
+                    <img
+                      src={productInfo.image}
+                      alt={productTitle || 'Product'}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
-                  <button
-                    onClick={handleOpenPopup}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] rounded-[var(--radius)] font-medium text-sm transition-all"
-                  >
-                    Reopen checkout
-                    <ExternalLink size={14} />
-                  </button>
-                </div>
-              )}
-
-              {/* Fallback: direct link */}
-              {mode === 'fallback' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6">
-                  <p className="text-sm text-[var(--muted-foreground)] text-center">
-                    Checkout couldn&apos;t load inline.
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-[var(--card-foreground)] line-clamp-2">
+                    {productTitle || 'Product'}
                   </p>
-                  {checkoutUrl && (
-                    <a
-                      href={checkoutUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 px-5 py-2.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] rounded-[var(--radius)] font-medium text-sm transition-all"
-                    >
-                      Open checkout
-                      <ExternalLink size={14} />
-                    </a>
+                  {displayPrice && (
+                    <p className="text-lg font-bold text-[var(--card-foreground)] mt-0.5">
+                      {displayPrice}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Buyer Info (from vault) */}
+              {hasVault && (
+                <div className="bg-[var(--muted)]/30 rounded-xl p-3.5 space-y-2.5 border border-[var(--border)]/50">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Shield size={12} className="text-emerald-500" />
+                    <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                      Using your saved info
+                    </span>
+                  </div>
+
+                  {vaultProfile?.email && (
+                    <div className="flex items-center gap-2">
+                      <Mail size={14} className="text-[var(--muted-foreground)] flex-shrink-0" />
+                      <span className="text-sm text-[var(--card-foreground)]">{vaultProfile.email}</span>
+                    </div>
+                  )}
+
+                  {addr && (
+                    <div className="flex items-start gap-2">
+                      <MapPin size={14} className="text-[var(--muted-foreground)] flex-shrink-0 mt-0.5" />
+                      <div className="text-sm text-[var(--card-foreground)]">
+                        <p>{addr.firstName} {addr.lastName}</p>
+                        <p className="text-[var(--muted-foreground)] text-xs">
+                          {addr.streetAddress}, {addr.addressLocality}{addr.addressRegion ? `, ${addr.addressRegion}` : ''} {addr.postalCode}
+                        </p>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
 
-              {/* Complete state */}
-              {mode === 'complete' && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6">
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: 'spring', damping: 12, stiffness: 200 }}
-                  >
-                    <CheckCircle2 size={48} className="text-emerald-500" />
-                  </motion.div>
+              {/* Info about pre-filled checkout */}
+              {hasVault && (
+                <p className="text-xs text-[var(--muted-foreground)] text-center">
+                  Your email and shipping address will be pre-filled at checkout
+                </p>
+              )}
+
+              {/* Waiting for completion */}
+              {status === 'waiting' && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3.5 text-center"
+                >
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                    Complete your purchase in the checkout tab
+                  </p>
+                  <p className="text-xs text-amber-600/70 dark:text-amber-500/70 mt-1">
+                    Return here when you&apos;re done
+                  </p>
+                </motion.div>
+              )}
+
+              {/* Complete */}
+              {status === 'complete' && (
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  className="flex flex-col items-center gap-2 py-4"
+                >
+                  <CheckCircle2 size={40} className="text-emerald-500" />
                   <p className="text-base font-semibold text-[var(--card-foreground)]">
                     Order confirmed! 🎉
                   </p>
-                  <p className="text-sm text-[var(--muted-foreground)] text-center">
-                    Your purchase is on its way.
-                  </p>
-                </div>
+                </motion.div>
               )}
             </div>
 
-            {/* Bottom link — shown for inline & fallback modes */}
-            {checkoutUrl && mode !== 'complete' && (
-              <div className="flex-shrink-0 p-2 border-t border-[var(--border)]/50 bg-[var(--card)]">
+            {/* Bottom Actions */}
+            <div className="flex-shrink-0 px-5 pb-5 pt-2 space-y-2.5 border-t border-[var(--border)]/50 bg-[var(--card)]">
+              {/* Pay Now button */}
+              {status !== 'complete' && prefilledUrl && (
+                <button
+                  onClick={handlePayNow}
+                  disabled={status === 'opening'}
+                  className={cn(
+                    'w-full flex items-center justify-center gap-2',
+                    'py-3.5 px-6 rounded-xl font-semibold text-base',
+                    'transition-all active:scale-[0.98]',
+                    status === 'waiting'
+                      ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30'
+                      : 'bg-[var(--brand)] text-[var(--brand-foreground)] hover:opacity-90',
+                    'disabled:opacity-50',
+                  )}
+                >
+                  {status === 'opening' ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      Opening checkout…
+                    </>
+                  ) : status === 'waiting' ? (
+                    <>
+                      <ExternalLink size={16} />
+                      Reopen checkout
+                    </>
+                  ) : (
+                    <>
+                      <ShoppingBag size={18} />
+                      {hasVault ? 'Pay now →' : 'Continue to checkout →'}
+                    </>
+                  )}
+                </button>
+              )}
+
+              {/* "I finished" button when waiting */}
+              {status === 'waiting' && (
+                <button
+                  onClick={() => {
+                    setStatus('complete')
+                    onCheckoutComplete?.({})
+                    setTimeout(onClose, 2000)
+                  }}
+                  className="w-full py-2 text-sm text-[var(--muted-foreground)] hover:text-[var(--card-foreground)] transition-colors"
+                >
+                  I completed my purchase ✓
+                </button>
+              )}
+
+              {/* Open in store link */}
+              {checkoutUrl && status === 'summary' && (
                 <a
                   href={checkoutUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--card-foreground)] transition-colors"
+                  className="flex items-center justify-center gap-1.5 text-xs text-[var(--muted-foreground)] hover:text-[var(--card-foreground)] transition-colors py-1"
                 >
-                  <span>Open in store →</span>
+                  Open in store <ChevronRight size={12} />
                 </a>
-              </div>
-            )}
+              )}
+            </div>
           </motion.div>
         </>
       )}
