@@ -219,6 +219,8 @@ export interface ExpressCheckoutState {
   checkoutId: string | null
   productTitle: string | null
   shopName: string | null
+  productImage: string | null
+  productPrice: string | null
   status: 'loading' | 'ready' | 'completed' | 'error'
   error: string | null
 }

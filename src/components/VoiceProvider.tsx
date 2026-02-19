@@ -144,6 +144,8 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     checkoutId: null,
     productTitle: null,
     shopName: null,
+    productImage: null,
+    productPrice: null,
     status: 'loading',
     error: null,
   })
@@ -344,6 +346,11 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   // ── Express Checkout: open ──
   const openExpressCheckout = useCallback(
     async (product: ProductDetail, variant?: VariantDetail) => {
+      // Extract image and price from product data
+      const productImage = product.images?.[0] || null
+      const selectedVariant = variant || product.variants?.[0]
+      const productPrice = String(selectedVariant?.price || product.priceRange || '') || null
+
       setExpressCheckout({
         isOpen: true,
         checkoutUrl: null,
@@ -352,6 +359,8 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
         checkoutId: null,
         productTitle: product.title,
         shopName: product.shopName || null,
+        productImage,
+        productPrice,
         status: 'loading',
         error: null,
       })
@@ -410,6 +419,8 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       checkoutId: null,
       productTitle: null,
       shopName: null,
+      productImage: null,
+      productPrice: null,
       status: 'loading',
       error: null,
     })

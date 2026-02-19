@@ -783,6 +783,12 @@ function GiftAIApp({
         jwt={voice.expressCheckout.jwt}
         productTitle={voice.expressCheckout.productTitle}
         shopName={voice.expressCheckout.shopName}
+        productInfo={{
+          title: voice.expressCheckout.productTitle || undefined,
+          image: voice.expressCheckout.productImage || undefined,
+          price: voice.expressCheckout.productPrice || undefined,
+          shopName: voice.expressCheckout.shopName || undefined,
+        }}
         vaultProfile={voice.vaultProfile}
         onCheckoutComplete={voice.handleCheckoutComplete}
       />
