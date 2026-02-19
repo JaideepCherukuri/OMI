@@ -89,6 +89,34 @@ export const userTools = [
       required: ['query'],
     },
   },
+  {
+    name: 'express_checkout',
+    description:
+      'Trigger Express Checkout for a product. Opens the in-app checkout sheet. Use when the user says "buy", "checkout", or "purchase" a specific product.',
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        product_title: {
+          type: 'string',
+          description: 'The product title to checkout',
+        },
+        variant_name: {
+          type: 'string',
+          description: 'Specific variant name (optional)',
+        },
+      },
+      required: ['product_title'],
+    },
+  },
+  {
+    name: 'get_buyer_profile',
+    description:
+      'Check if the buyer has a saved shipping profile for Express Checkout. Returns whether profile exists (never reveal details). Use before express_checkout to determine if pre-fill is possible.',
+    parameters: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
 ]
 
 export function getToolsForMode(_mode: string = 'user') {

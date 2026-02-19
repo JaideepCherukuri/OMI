@@ -37,6 +37,9 @@ import type {
   StoreCredentials,
   VoiceState,
   StageContent,
+  ExpressCheckoutState,
+  BuyerVaultProfile,
+  VariantDetail,
 } from '@/types'
 
 // ═══════════════════════════════════════════
@@ -84,6 +87,15 @@ interface VoiceContextValue {
 
   // Room name
   roomName: string | null
+
+  // Express Checkout
+  expressCheckout: ExpressCheckoutState
+  openExpressCheckout: (product: ProductDetail, variant?: VariantDetail) => Promise<void>
+  closeExpressCheckout: () => void
+  handleCheckoutComplete: (orderData?: any) => void
+  vaultProfile: BuyerVaultProfile | null
+  showSavePrompt: boolean
+  setShowSavePrompt: (show: boolean) => void
 }
 
 const VoiceContext = createContext<VoiceContextValue | null>(null)
@@ -122,6 +134,21 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
   const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null)
   const [isTextLoading, setIsTextLoading] = useState(false)
   const [agentSuggestions, setAgentSuggestions] = useState<SuggestionChip[]>([])
+
+  // ── Express Checkout state ──
+  const [expressCheckout, setExpressCheckout] = useState<ExpressCheckoutState>({
+    isOpen: false,
+    checkoutUrl: null,
+    jwt: null,
+    mode: null,
+    checkoutId: null,
+    productTitle: null,
+    shopName: null,
+    status: 'loading',
+    error: null,
+  })
+  const [vaultProfile, setVaultProfile] = useState<BuyerVaultProfile | null>(null)
+  const [showSavePrompt, setShowSavePrompt] = useState(false)
 
   // ── MCP session ID (persists across requests for cart continuity) ──
   const [mcpSessionId, setMcpSessionId] = useState<string>(
@@ -314,6 +341,130 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     setSpeakerEnabled((prev) => !prev)
   }, [speakerEnabled])
 
+  // ── Express Checkout: open ──
+  const openExpressCheckout = useCallback(
+    async (product: ProductDetail, variant?: VariantDetail) => {
+      setExpressCheckout({
+        isOpen: true,
+        checkoutUrl: null,
+        jwt: null,
+        mode: null,
+        checkoutId: null,
+        productTitle: product.title,
+        shopName: product.shopName || null,
+        status: 'loading',
+        error: null,
+      })
+
+      try {
+        const resp = await fetch('/api/checkout/express', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            product,
+            variant,
+            vaultProfile,
+          }),
+        })
+
+        if (!resp.ok) throw new Error(`Express checkout API error: ${resp.status}`)
+        const data = await resp.json()
+
+        setExpressCheckout((prev) => ({
+          ...prev,
+          checkoutUrl: data.checkoutUrl || product.directCheckoutUrl || null,
+          jwt: data.jwt || null,
+          mode: data.mode || 'direct',
+          checkoutId: data.checkoutId || null,
+          status: 'ready',
+        }))
+      } catch (err) {
+        console.error('Express checkout error:', err)
+        // Fallback to directCheckoutUrl if available
+        if (product.directCheckoutUrl) {
+          setExpressCheckout((prev) => ({
+            ...prev,
+            checkoutUrl: product.directCheckoutUrl!,
+            mode: 'direct',
+            status: 'ready',
+          }))
+        } else {
+          setExpressCheckout((prev) => ({
+            ...prev,
+            status: 'error',
+            error: 'Could not prepare checkout. Please try again.',
+          }))
+        }
+      }
+    },
+    [vaultProfile],
+  )
+
+  // ── Express Checkout: close ──
+  const closeExpressCheckout = useCallback(() => {
+    setExpressCheckout({
+      isOpen: false,
+      checkoutUrl: null,
+      jwt: null,
+      mode: null,
+      checkoutId: null,
+      productTitle: null,
+      shopName: null,
+      status: 'loading',
+      error: null,
+    })
+  }, [])
+
+  // ── Express Checkout: complete ──
+  const handleCheckoutComplete = useCallback(
+    (orderData?: any) => {
+      // Close the sheet
+      closeExpressCheckout()
+
+      // Add confirmation message
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `checkout-complete-${Date.now()}`,
+          role: 'assistant',
+          content: '🎉 Order confirmed! Your purchase is on its way.',
+          timestamp: Date.now(),
+          source: 'system',
+        },
+      ])
+
+      // If no vault profile, show save prompt
+      if (!vaultProfile) {
+        setShowSavePrompt(true)
+      }
+
+      // Try to save buyer info from the order
+      if (orderData) {
+        fetch('/api/vault', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderData }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data?.email) setVaultProfile(data)
+          })
+          .catch(() => {})
+      }
+    },
+    [closeExpressCheckout, vaultProfile],
+  )
+
+  // ── Fetch vault profile on mount ──
+  useEffect(() => {
+    fetch('/api/vault')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.email) setVaultProfile(data)
+      })
+      .catch(() => {})
+  }, [])
+
   // ── Clear chat ──
   const clearChat = useCallback(() => {
     setMessages([])
@@ -378,6 +529,13 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
         if (chips.length > 0) {
           setAgentSuggestions(chips)
         }
+        return
+      }
+
+      // ── Express checkout triggered via voice agent ──
+      if (type === 'express_checkout_open') {
+        const product = event.product as ProductDetail
+        openExpressCheckout(product)
         return
       }
 
@@ -449,7 +607,7 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
     } catch (err) {
       console.error('Data channel parse error:', err)
     }
-  }, [])
+  }, [openExpressCheckout])
 
   // ── Handle assistant voice transcriptions from LiveKit ──
   // This is the ONLY source of agent speech text (from Gemini's output_audio_transcription).
@@ -522,6 +680,13 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       toggleSpeaker,
       isTextLoading,
       roomName,
+      expressCheckout,
+      openExpressCheckout,
+      closeExpressCheckout,
+      handleCheckoutComplete,
+      vaultProfile,
+      showSavePrompt,
+      setShowSavePrompt,
     }),
     [
       voiceState, voiceConnected, voiceConnecting,
@@ -531,6 +696,8 @@ export function VoiceProvider({ storeCredentials, searchMode = 'storefront', chi
       clearChat, setStageContent,
       micEnabled, speakerEnabled, toggleMic, toggleSpeaker,
       isTextLoading, roomName,
+      expressCheckout, openExpressCheckout, closeExpressCheckout,
+      handleCheckoutComplete, vaultProfile, showSavePrompt,
     ],
   )
 

@@ -35,7 +35,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { VoiceProvider, useVoice } from '@/components/VoiceProvider'
-import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal, ThinkingIndicator } from '@/components/chat'
+import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal, ThinkingIndicator, ExpressCheckoutSheet, SaveProfilePrompt } from '@/components/chat'
 // StoreSwapModal removed — OMI defaults to global mode
 import Orb3D from '@/components/Orb3D'
 import { PromptCarousel } from '@/components/PromptCarousel'
@@ -349,6 +349,13 @@ function GiftAIApp({
     [voice],
   )
 
+  const handleExpressCheckout = useCallback(
+    (product: ProductDetail, variant?: VariantDetail) => {
+      voice.openExpressCheckout(product, variant)
+    },
+    [voice],
+  )
+
   // ── Contextual suggestion chips (for chat mode) ──
   // Uses agent-provided suggestions if available, otherwise generates smart defaults.
   const chatSuggestions = useMemo(() => {
@@ -616,6 +623,7 @@ function GiftAIApp({
                         onProductClick={handleProductClick}
                         onAddToCart={handleAddToCart}
                         onBuyNow={handleBuyNow}
+                        onExpressCheckout={handleExpressCheckout}
                         highlightedProductId={voice.highlightedProductId}
                       />
                     </div>
@@ -628,6 +636,27 @@ function GiftAIApp({
                         cartState={item.data}
                         storeName={storeCredentials.storeUrl.replace('.myshopify.com', '')}
                         onCheckout={() => setCheckoutOpen(true)}
+                        onExpressCheckout={() => {
+                          // Open express checkout with the first cart item's product info
+                          const firstLine = (item.data as any)?.lines?.[0]
+                          if (firstLine) {
+                            voice.openExpressCheckout({
+                              productId: 0,
+                              title: firstLine.productTitle,
+                              descriptionHtml: '',
+                              vendor: '',
+                              productType: '',
+                              tags: [],
+                              status: 'active',
+                              handle: '',
+                              images: firstLine.imageUrl ? [firstLine.imageUrl] : [],
+                              variants: [],
+                              priceRange: firstLine.price,
+                              totalStock: 1,
+                              hasDiscount: false,
+                            })
+                          }
+                        }}
                       />
                     </div>
                   )
@@ -724,6 +753,29 @@ function GiftAIApp({
         cartState={voice.cartState}
       />
 
+      <ExpressCheckoutSheet
+        isOpen={voice.expressCheckout.isOpen}
+        onClose={voice.closeExpressCheckout}
+        checkoutUrl={voice.expressCheckout.checkoutUrl}
+        jwt={voice.expressCheckout.jwt}
+        productTitle={voice.expressCheckout.productTitle}
+        shopName={voice.expressCheckout.shopName}
+        onCheckoutComplete={voice.handleCheckoutComplete}
+      />
+
+      {voice.showSavePrompt && (
+        <div className="fixed bottom-24 left-0 right-0 z-50 flex justify-center">
+          <SaveProfilePrompt
+            isVisible={voice.showSavePrompt}
+            onSave={() => {
+              voice.setShowSavePrompt(false)
+              fetch('/api/vault', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ save: true }) }).catch(() => {})
+            }}
+            onDismiss={() => voice.setShowSavePrompt(false)}
+          />
+        </div>
+      )}
+
       {/* StoreSwapModal removed — defaulting to global mode */}
     </div>
   )
@@ -734,12 +786,13 @@ function GiftAIApp({
 // ═══════════════════════════════════════════
 
 function ProductCarouselInline({
-  products, onProductClick, onAddToCart, onBuyNow, highlightedProductId,
+  products, onProductClick, onAddToCart, onBuyNow, onExpressCheckout, highlightedProductId,
 }: {
   products: ProductDetail[]
   onProductClick?: (p: ProductDetail) => void
   onAddToCart?: (p: ProductDetail, v?: VariantDetail) => void
   onBuyNow?: (p: ProductDetail, v?: VariantDetail) => void
+  onExpressCheckout?: (p: ProductDetail, v?: VariantDetail) => void
   highlightedProductId?: number | null
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -775,6 +828,7 @@ function ProductCarouselInline({
             onProductClick={onProductClick}
             onAddToCart={onAddToCart}
             onBuyNow={onBuyNow}
+            onExpressCheckout={onExpressCheckout}
             isHighlighted={p.productId === highlightedProductId}
           />
         ))}

@@ -14,6 +14,7 @@ interface InlineCartWidgetProps {
   storeName?: string
   storeLogoUrl?: string
   onCheckout?: () => void
+  onExpressCheckout?: () => void
   onRemoveItem?: (lineId: string) => void
   onUpdateQuantity?: (lineId: string, quantity: number) => void
   className?: string
@@ -24,6 +25,7 @@ export default function InlineCartWidget({
   storeName,
   storeLogoUrl,
   onCheckout,
+  onExpressCheckout,
   onRemoveItem,
   onUpdateQuantity,
   className,
@@ -100,20 +102,36 @@ export default function InlineCartWidget({
           )}
         </button>
 
-        <button
-          onClick={() => {
-            if (cartState.checkoutUrl) {
-              window.open(cartState.checkoutUrl, '_blank')
-            }
-            onCheckout?.()
-          }}
-          className="flex items-center gap-1.5 px-4 py-2 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] text-sm font-medium rounded-[var(--radius)] transition-all flex-shrink-0"
-        >
-          Checkout
-          <span className="text-[var(--brand-foreground)]/70 text-xs">
-            {cartState.currency} ${cartState.totalAmount}
-          </span>
-        </button>
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <button
+            onClick={() => {
+              if (onExpressCheckout) {
+                onExpressCheckout()
+              } else {
+                if (cartState.checkoutUrl) {
+                  window.open(cartState.checkoutUrl, '_blank')
+                }
+                onCheckout?.()
+              }
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] text-sm font-medium rounded-[var(--radius)] transition-all"
+          >
+            ⚡ Express
+            <span className="text-[var(--brand-foreground)]/70 text-xs">
+              {cartState.currency} ${cartState.totalAmount}
+            </span>
+          </button>
+          {cartState.checkoutUrl && (
+            <a
+              href={cartState.checkoutUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-[var(--muted-foreground)] hover:text-[var(--card-foreground)] transition-colors"
+            >
+              Open in store →
+            </a>
+          )}
+        </div>
       </div>
 
       {/* Expanded: item details */}

@@ -13,8 +13,8 @@ describe('Tool definitions', () => {
       expect(toolNames).toContain('list_products')
     })
 
-    it('has exactly 7 tools (including global search)', () => {
-      expect(userTools).toHaveLength(7)
+    it('has exactly 9 tools (including global search and express checkout)', () => {
+      expect(userTools).toHaveLength(9)
     })
 
     it('has search_global_products tool for cross-store search', () => {
@@ -80,6 +80,23 @@ describe('Tool definitions', () => {
       expect(toolNames).not.toContain('delete_product')
       expect(toolNames).not.toContain('update_product')
       expect(toolNames).not.toContain('set_inventory')
+    })
+
+    it('has express_checkout tool', () => {
+      const toolNames = userTools.map((t) => t.name)
+      expect(toolNames).toContain('express_checkout')
+      const tool = userTools.find((t) => t.name === 'express_checkout')!
+      expect(tool.parameters.required).toContain('product_title')
+      const props = tool.parameters.properties as Record<string, unknown>
+      expect(props.product_title).toBeDefined()
+      expect(props.variant_name).toBeDefined()
+    })
+
+    it('has get_buyer_profile tool', () => {
+      const toolNames = userTools.map((t) => t.name)
+      expect(toolNames).toContain('get_buyer_profile')
+      const tool = userTools.find((t) => t.name === 'get_buyer_profile')!
+      expect(tool.parameters.type).toBe('object')
     })
   })
 

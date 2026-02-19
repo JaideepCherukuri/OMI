@@ -20,6 +20,7 @@ interface ChatProductCardProps {
   product: ProductDetail
   onAddToCart?: (product: ProductDetail, variant?: VariantDetail) => void
   onBuyNow?: (product: ProductDetail, variant?: VariantDetail) => void
+  onExpressCheckout?: (product: ProductDetail, variant?: VariantDetail) => void
   onProductClick?: (product: ProductDetail) => void
   isHighlighted?: boolean
   compact?: boolean
@@ -30,6 +31,7 @@ export default function ChatProductCard({
   product,
   onAddToCart,
   onBuyNow,
+  onExpressCheckout,
   onProductClick,
   isHighlighted,
   compact,
@@ -96,29 +98,17 @@ export default function ChatProductCard({
           </span>
         ) : null}
 
-        {/* Action button — single "Checkout now" CTA for all products */}
+        {/* Primary CTA — Express Checkout */}
         <div className="absolute bottom-0 left-0 right-0 flex gap-1.5 px-2 pb-2 pt-8 bg-gradient-to-t from-black/50 to-transparent">
-          {product.isGlobal && product.directCheckoutUrl ? (
-            <a
-              href={product.directCheckoutUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] text-xs font-medium rounded-[var(--radius)] transition-colors shadow-sm"
-            >
-              🛒 Checkout now
-            </a>
-          ) : (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onBuyNow?.(product, defaultVariant)
-              }}
-              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] text-xs font-medium rounded-[var(--radius)] transition-all shadow-sm"
-            >
-              🛒 Checkout now
-            </button>
-          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onExpressCheckout?.(product, defaultVariant)
+            }}
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-[var(--brand)] hover:opacity-90 text-[var(--brand-foreground)] text-xs font-medium rounded-[var(--radius)] transition-all shadow-sm"
+          >
+            ⚡ Express Checkout
+          </button>
         </div>
       </div>
 
@@ -155,6 +145,30 @@ export default function ChatProductCard({
               {rating.toFixed(1)}
             </span>
           </div>
+        </div>
+
+        {/* Secondary action: "Open on {shop}" link for global, or outlined Add to Cart for local */}
+        <div className="mt-2">
+          {product.isGlobal && product.directCheckoutUrl ? (
+            <a
+              href={product.directCheckoutUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-[var(--muted-foreground)] hover:text-[var(--card-foreground)] transition-colors"
+            >
+              Open on {product.shopName || 'store'} →
+            </a>
+          ) : onAddToCart ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onAddToCart(product, defaultVariant)
+              }}
+              className="w-full py-1 text-[11px] font-medium text-[var(--card-foreground)] border border-[var(--border)] rounded-[var(--radius)] hover:bg-[var(--muted)]/20 transition-all"
+            >
+              Add to Cart
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

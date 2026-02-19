@@ -190,3 +190,35 @@ export interface AgentProductDetailEvent {
 }
 
 export type AgentDataEvent = AgentProductsEvent | AgentCartEvent | AgentCheckoutEvent | AgentProductDetailEvent
+
+// === Express Checkout Types ===
+
+export interface BuyerAddress {
+  label?: string
+  firstName: string
+  lastName: string
+  streetAddress: string
+  addressLocality: string
+  addressRegion: string
+  postalCode: string
+  addressCountry: string
+}
+
+export interface BuyerVaultProfile {
+  email: string
+  phone?: string
+  defaultAddressIndex: number
+  addresses: BuyerAddress[]
+}
+
+export interface ExpressCheckoutState {
+  isOpen: boolean
+  checkoutUrl: string | null
+  jwt: string | null
+  mode: 'prefilled' | 'direct' | null
+  checkoutId: string | null
+  productTitle: string | null
+  shopName: string | null
+  status: 'loading' | 'ready' | 'completed' | 'error'
+  error: string | null
+}
