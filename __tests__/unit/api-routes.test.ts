@@ -180,6 +180,27 @@ describe('API Routes', () => {
       expect(data.success).toBe(true)
       expect(data.profile.email).toBe('test@example.com')
     })
+
+    it('DELETE clears vault and returns success', async () => {
+      const { DELETE } = await import('@/app/api/vault/route')
+
+      const resp = await DELETE()
+      const data = await resp.json()
+      expect(data.success).toBe(true)
+      // Verify the response clears the omi_vault cookie
+      const setCookie = resp.headers.get('set-cookie')
+      expect(setCookie).toBeTruthy()
+      expect(setCookie).toContain('omi_vault')
+    })
+
+    it('DELETE returns 200 even if no cookie existed', async () => {
+      const { DELETE } = await import('@/app/api/vault/route')
+
+      const resp = await DELETE()
+      expect(resp.status).toBe(200)
+      const data = await resp.json()
+      expect(data.success).toBe(true)
+    })
   })
 
   // ═══════════════════════════════════════════════════════════
