@@ -195,8 +195,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Step 3: Pre-filled checkout (vault present, not skipped)
-    if (vault && !skipPrefill) {
+    // Step 3: Pre-filled checkout (vault present, not skipped, have domain + variant)
+    if (vault && !skipPrefill && shopDomain && variantGid) {
       try {
         const client = new CheckoutMCPClient(shopDomain, jwt)
 
