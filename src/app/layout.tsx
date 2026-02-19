@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import Script from 'next/script'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -36,7 +37,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
       </head>
-      <body className="font-sans antialiased">{children}</body>
+      <body className="font-sans antialiased">
+        {children}
+        {/* Shopify Checkout Kit — web component for <shopify-checkout> */}
+        <Script
+          src="https://cdn.shopify.com/shopifycloud/checkout-web/component/unstable/kit.js"
+          strategy="afterInteractive"
+          type="module"
+        />
+      </body>
     </html>
   )
 }
