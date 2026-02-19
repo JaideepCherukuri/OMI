@@ -72,6 +72,20 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// ── DELETE: Clear vault ──
+
+export async function DELETE() {
+  try {
+    const resp = NextResponse.json({ success: true })
+    resp.cookies.delete(VAULT_COOKIE)
+    return resp
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Vault clear failed'
+    console.error('Vault DELETE error:', message)
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
 // ── POST: Save vault ──
 
 export async function POST(req: NextRequest) {

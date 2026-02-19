@@ -35,7 +35,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { VoiceProvider, useVoice } from '@/components/VoiceProvider'
-import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal, ThinkingIndicator, ExpressCheckoutSheet, SaveProfilePrompt } from '@/components/chat'
+import { ChatMessage, ChatProductCard, ProductDetailPanel, InlineCartWidget, CheckoutModal, ThinkingIndicator, ExpressCheckoutSheet, SaveProfilePrompt, BuyerVaultModal } from '@/components/chat'
 // StoreSwapModal removed — OMI defaults to global mode
 import Orb3D from '@/components/Orb3D'
 import { PromptCarousel } from '@/components/PromptCarousel'
@@ -45,7 +45,7 @@ import { useOrbAudio } from '@/hooks/useOrbAudio'
 import { cn } from '@/lib/utils'
 import { AnimatePresence } from 'framer-motion'
 import type { StoreCredentials, ProductDetail, VariantDetail } from '@/types'
-import { ShoppingBag, ChevronLeft, ChevronRight, MicOff } from 'lucide-react'
+import { ShoppingBag, ChevronLeft, ChevronRight, MicOff, Shield } from 'lucide-react'
 
 export type SearchMode = 'global' | 'storefront'
 type Theme = 'light' | 'dark'
@@ -107,6 +107,8 @@ function GiftAIApp({
   const [detailProduct, setDetailProduct] = useState<ProductDetail | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [vaultOpen, setVaultOpen] = useState(false)
+  const [hasVaultData, setHasVaultData] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   // ── Streaming welcome message while agent connects ──
@@ -185,6 +187,14 @@ function GiftAIApp({
       document.documentElement.classList.remove('dark')
     }
   }, [theme])
+
+  // ── Check vault on mount ──
+  useEffect(() => {
+    fetch('/api/vault')
+      .then((r) => r.json())
+      .then((data) => setHasVaultData(!!data.profile))
+      .catch(() => {})
+  }, [])
 
   const toggleTheme = useCallback(() => {
     const next: Theme = theme === 'dark' ? 'light' : 'dark'
@@ -472,6 +482,19 @@ function GiftAIApp({
           {/* Voice/Text toggle + Cart (only when chat is active) */}
           {isOrbMinimized && (
             <>
+              {/* Buyer Vault */}
+              <button
+                onClick={() => setVaultOpen(true)}
+                className="relative p-1.5 rounded-[var(--radius)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                title="Buyer Vault"
+              >
+                <Shield size={16} className="text-[var(--foreground)]" />
+                {hasVaultData && (
+                  <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-emerald-500 rounded-full ring-2 ring-[var(--background)]" />
+                )}
+              </button>
+
+              {/* Cart */}
               <button
                 onClick={() => setCheckoutOpen(true)}
                 className="relative p-1.5 rounded-[var(--radius)] hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
@@ -777,6 +800,12 @@ function GiftAIApp({
       )}
 
       {/* StoreSwapModal removed — defaulting to global mode */}
+
+      <BuyerVaultModal
+        isOpen={vaultOpen}
+        onClose={() => setVaultOpen(false)}
+        onVaultChange={(has) => setHasVaultData(has)}
+      />
     </div>
   )
 }
